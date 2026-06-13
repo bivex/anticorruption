@@ -220,7 +220,43 @@ class IncomeItem:
     source_type: str       # "legal_entity_ua", "citizen_ua", "declarant", etc.
     income_type: str       # "salary", "gift_money", "business", "other_monetary", etc.
     amount_uah: Decimal
-    recipient: str         # full name of who received it
+    recipient: str         # full name or "declarant" / "family:<relation>"
+
+
+@dataclass
+class PropertyItem:
+    object_type: str       # "Житловий будинок", "Квартира", etc.
+    area: Decimal | None
+    country: str
+    city: str
+    owner: str             # "declarant" or "family:<relation>"
+    ownership_type: str    # "Власність", "Оренда", etc.
+
+
+@dataclass
+class VehicleItem:
+    brand: str
+    model: str
+    year: int | None
+    object_type: str       # "Автомобіль легковий", etc.
+    owner: str
+    ownership_type: str
+    cost_uah: Decimal | None
+
+
+@dataclass
+class BankAccount:
+    bank_name: str
+    bank_edrpou: str | None
+    owner: str
+
+
+@dataclass
+class FamilyMember:
+    member_id: str         # matches person_who_care / rightBelongs
+    firstname: str
+    lastname: str
+    relation: str          # "дружина", "чоловік", "дитина", etc.
 
 
 @dataclass
@@ -235,7 +271,13 @@ class ParsedDeclaration:
     incomes: list[IncomeItem] = field(default_factory=list)
     cash_usd: Decimal = Decimal("0")
     cash_uah: Decimal = Decimal("0")
+    cash_eur: Decimal = Decimal("0")
+    cash_other: list[tuple[str, Decimal]] = field(default_factory=list)  # [(currency, amount)]
+    family_members: list[FamilyMember] = field(default_factory=list)
     family_members_declared: bool = False
+    properties: list[PropertyItem] = field(default_factory=list)
+    vehicles: list[VehicleItem] = field(default_factory=list)
+    bank_accounts: list[BankAccount] = field(default_factory=list)
     raw: dict = field(default_factory=dict, repr=False)
 
 
@@ -276,39 +318,60 @@ def _parse_money(value: Any) -> Decimal:
 def parse_declaration(raw: dict) -> ParsedDeclaration:
     """
     Convert a raw NAZK API document dict into a ParsedDeclaration.
-    Handles both old (step_N arrays) and new (step_N.data) formats.
+    Handles both shallow (list API) and full (get_document) responses.
     """
     data = raw.get("data", raw)
 
-    # Top-level fields (list API duplicates these outside 'data')
-    declaration_year_top = raw.get("declaration_year") or raw.get("declaration_year")
+    # Top-level fields present in list API response
+    declaration_year_top = raw.get("declaration_year")
     declaration_type_top = raw.get("declaration_type")
     date_top = raw.get("date") or raw.get("lastmodified_date")
 
-    def step(n: int) -> dict:
+    def step_raw(n: int):
+        """Return the raw step value (list or dict)."""
         key = f"step_{n}"
-        s = data.get(key, {})
-        # New API: data is nested under .data
+        s = data.get(key)
+        if s is None:
+            return None
+        # Full API: value is {"data": <actual>}
         if isinstance(s, dict) and "data" in s:
             return s["data"]
-        return s if isinstance(s, dict) else {}
+        return s
 
-    # Step 1 — declarant info + declaration meta (list API puts everything here)
-    s1 = step(1)
-    decl_type_raw = (
-        declaration_type_top
-        or data.get("declaration_type")
-        or s1.get("declarationType", "")
-    )
-    decl_type_map = {"1": "annual", "2": "candidate", "3": "exit", "4": "family"}
-    declaration_type = decl_type_map.get(str(decl_type_raw), str(decl_type_raw))
+    def step_dict(n: int) -> dict:
+        v = step_raw(n)
+        return v if isinstance(v, dict) else {}
 
+    def step_list(n: int) -> list:
+        v = step_raw(n)
+        if isinstance(v, list):
+            return v
+        if isinstance(v, dict):
+            # dict with numeric/iteration keys — collect values
+            return [vv for vv in v.values() if isinstance(vv, dict)]
+        return []
+
+    # ------------------------------------------------------------------
+    # step_0 — declaration meta (most reliable source)
+    # ------------------------------------------------------------------
+    s0 = step_dict(0)
     declaration_year = int(
         declaration_year_top
-        or data.get("declaration_year")
-        or s1.get("declarationYear")
+        or s0.get("declaration_period")
+        or s0.get("declaration_year")
         or 0
     )
+    decl_type_raw = str(
+        declaration_type_top
+        or s0.get("declaration_type", "")
+    )
+    # step_0 may have Ukrainian label; top-level is numeric code
+    decl_type_map = {
+        "1": "annual", "2": "candidate", "3": "exit", "4": "family",
+        "Щорічна": "annual", "Кандидат": "candidate",
+        "Припинення": "exit", "Сімейна": "family",
+    }
+    declaration_type = decl_type_map.get(decl_type_raw, decl_type_raw or "annual")
 
     # Submission date
     submitted_date = None
@@ -319,73 +382,90 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
         except Exception:
             pass
 
-    # Step 1 / step 2.1 — declarant name
-    # List API: lastname is full name in one field; full doc splits into parts
-    lastname = s1.get("lastname", "")
+    # ------------------------------------------------------------------
+    # step_1 — declarant personal info
+    # ------------------------------------------------------------------
+    s1 = step_dict(1)
+    lastname  = s1.get("lastname", "")
     firstname = s1.get("firstname", "")
     middlename = s1.get("middlename", "")
     if firstname or middlename:
         declarant_name = f"{lastname} {firstname} {middlename}".strip()
     else:
-        # full name already in lastname field
+        # list API: lastname already contains full name
         declarant_name = lastname.strip() or "Unknown"
 
-    work_place = (
-        data.get("workPlace")
-        or (s1.get("workPlace", {}).get("value", "") if isinstance(s1.get("workPlace"), dict) else s1.get("workPlace", ""))
-        or ""
-    )
+    wp_raw = s1.get("workPlace", "")
+    work_place = wp_raw.get("value", "") if isinstance(wp_raw, dict) else str(wp_raw or "")
     position = s1.get("workPost", "")
 
-    # Step 2.2 — family members
-    s2_2 = data.get("step_2_2", {})
-    if isinstance(s2_2, dict) and "data" in s2_2:
-        s2_2 = s2_2["data"]
-    family_members_declared = bool(s2_2)
+    # ------------------------------------------------------------------
+    # step_2 — family members (list of person objects)
+    # ------------------------------------------------------------------
+    family_members: list[FamilyMember] = []
+    for entry in step_list(2):
+        if not isinstance(entry, dict):
+            continue
+        member_id = str(entry.get("id", ""))
+        family_members.append(FamilyMember(
+            member_id=member_id,
+            firstname=entry.get("firstname", ""),
+            lastname=entry.get("lastname", ""),
+            relation=entry.get("subjectRelation", ""),
+        ))
+    family_members_declared = bool(family_members)
 
-    # Step 11 — incomes
-    s11 = step(11)
+    # Build id → relation map for resolving person_who_care / rightBelongs
+    _id_to_relation: dict[str, str] = {
+        m.member_id: f"family:{m.relation} {m.firstname} {m.lastname}".strip()
+        for m in family_members
+    }
+
+    def resolve_person(person_code: str) -> str:
+        """Map person id to human-readable label."""
+        if str(person_code) == "1":
+            return declarant_name
+        return _id_to_relation.get(str(person_code), f"family_member_{person_code}")
+
+    def resolve_rights(rights: list) -> tuple[str, str]:
+        """Return (owner_label, ownership_type) from a rights list."""
+        if not rights:
+            return declarant_name, ""
+        r = rights[0]
+        belongs = str(r.get("rightBelongs", r.get("rights_id", "1")))
+        owner = resolve_person(belongs)
+        ownership = r.get("ownershipType", "")
+        return owner, ownership
+
+    # ------------------------------------------------------------------
+    # step_11 — incomes (list)
+    # ------------------------------------------------------------------
     incomes: list[IncomeItem] = []
-
-    # step_11 is a list of income entries directly
-    if isinstance(s11, list):
-        income_entries = s11
-    elif isinstance(s11, dict):
-        income_entries = [v for k, v in s11.items() if isinstance(v, dict)]
-    else:
-        income_entries = []
-
-    for entry in income_entries:
+    for entry in step_list(11):
         if not isinstance(entry, dict):
             continue
 
-        # Source info is in entry['sources'][0]
         sources = entry.get("sources", [])
         src = sources[0] if sources else {}
 
         source_name = (
             src.get("source_ua_company_name")
-            or (
-                " ".join(filter(None, [
-                    src.get("source_ua_lastname", ""),
-                    src.get("source_ua_firstname", ""),
-                    src.get("source_ua_middlename", ""),
-                ])).strip()
-            )
+            or " ".join(filter(None, [
+                src.get("source_ua_lastname", ""),
+                src.get("source_ua_firstname", ""),
+                src.get("source_ua_middlename", ""),
+            ])).strip()
             or src.get("source_citizen", "unknown")
         )
         source_edrpou = src.get("source_ua_company_code")
         source_type = src.get("source_citizen", "unknown")
 
-        income_type_raw = entry.get("objectType", "")
-        income_type = _normalize_income_type(str(income_type_raw))
-
+        income_type = _normalize_income_type(str(entry.get("objectType", "")))
         amount = _parse_money(entry.get("sizeIncome") or entry.get("amount"))
 
-        # person_who_care: "1" = declarant, "2" = family member etc.
         persons = entry.get("person_who_care", [{"person": "1"}])
-        person_code = persons[0].get("person", "1") if persons else "1"
-        recipient = declarant_name if person_code == "1" else f"family_member_{person_code}"
+        person_code = str(persons[0].get("person", "1")) if persons else "1"
+        recipient = resolve_person(person_code)
 
         incomes.append(IncomeItem(
             source_name=str(source_name),
@@ -393,29 +473,101 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
             source_type=str(source_type),
             income_type=income_type,
             amount_uah=amount,
-            recipient=str(recipient),
+            recipient=recipient,
         ))
 
-    # Step 12 — cash assets
-    s12 = step(12)
-    cash_usd = Decimal("0")
+    # ------------------------------------------------------------------
+    # step_12 — cash & financial assets (list)
+    # ------------------------------------------------------------------
     cash_uah = Decimal("0")
-    cash_entries = s12 if isinstance(s12, list) else s12.get("assets", [])
-    if isinstance(s12, dict):
-        cash_entries = [v for k, v in s12.items() if isinstance(v, dict)]
-    for entry in cash_entries:
+    cash_usd = Decimal("0")
+    cash_eur = Decimal("0")
+    cash_other: list[tuple[str, Decimal]] = []
+
+    for entry in step_list(12):
         if not isinstance(entry, dict):
             continue
-        amount_raw = entry.get("amount") or entry.get("sizeAssets") or 0
-        currency = str(entry.get("currency", {}).get("value", "UAH") if isinstance(entry.get("currency"), dict) else entry.get("currency", "UAH")).upper()
-        amount = _parse_money(amount_raw)
-        if "USD" in currency:
-            cash_usd += amount
-        else:
+        obj_type = str(entry.get("objectType", "")).lower()
+        if "готівков" not in obj_type and "cash" not in obj_type:
+            continue
+        amount = _parse_money(entry.get("sizeAssets") or entry.get("amount"))
+        currency_raw = str(entry.get("assetsCurrency", "UAH")).upper()
+        # Normalize: "UAH (УКРАЇНСЬКА ГРИВНЯ)" -> "UAH"
+        currency = currency_raw.split("(")[0].strip()
+        if currency == "UAH":
             cash_uah += amount
+        elif currency == "USD":
+            cash_usd += amount
+        elif currency == "EUR":
+            cash_eur += amount
+        else:
+            cash_other.append((currency, amount))
+
+    # ------------------------------------------------------------------
+    # step_3 — real estate (list)
+    # ------------------------------------------------------------------
+    properties: list[PropertyItem] = []
+    for entry in step_list(3):
+        if not isinstance(entry, dict):
+            continue
+        rights = entry.get("rights", [])
+        owner, ownership_type = resolve_rights(rights)
+        area_raw = entry.get("totalArea") or entry.get("livingArea")
+        properties.append(PropertyItem(
+            object_type=entry.get("objectType", ""),
+            area=_parse_money(area_raw) if area_raw else None,
+            country=str(entry.get("country", "")),
+            city=str(entry.get("city", "")),
+            owner=owner,
+            ownership_type=ownership_type,
+        ))
+
+    # ------------------------------------------------------------------
+    # step_6 — vehicles (list)
+    # ------------------------------------------------------------------
+    vehicles: list[VehicleItem] = []
+    for entry in step_list(6):
+        if not isinstance(entry, dict):
+            continue
+        rights = entry.get("rights", [])
+        owner, ownership_type = resolve_rights(rights)
+        cost_raw = entry.get("costDate")
+        cost = _parse_money(cost_raw) if cost_raw and str(cost_raw) not in ("[Не застосовується]", "") else None
+        yr_raw = entry.get("graduationYear")
+        vehicles.append(VehicleItem(
+            brand=str(entry.get("brand", "")),
+            model=str(entry.get("model", "")),
+            year=int(yr_raw) if yr_raw and str(yr_raw).isdigit() else None,
+            object_type=str(entry.get("objectType", "")),
+            owner=owner,
+            ownership_type=ownership_type,
+            cost_uah=cost,
+        ))
+
+    # ------------------------------------------------------------------
+    # step_17 — bank accounts (list)
+    # ------------------------------------------------------------------
+    bank_accounts: list[BankAccount] = []
+    seen_banks: set[str] = set()
+    for entry in step_list(17):
+        if not isinstance(entry, dict):
+            continue
+        bank_name = str(entry.get("establishment_ua_company_name", "") or entry.get("establishment_eng_company_name", ""))
+        bank_edrpou = entry.get("establishment_ua_company_code")
+        persons = entry.get("person_who_care", [{"person": "1"}])
+        person_code = str(persons[0].get("person", "1")) if persons else "1"
+        owner = resolve_person(person_code)
+        key = f"{bank_name}|{owner}"
+        if key not in seen_banks:
+            seen_banks.add(key)
+            bank_accounts.append(BankAccount(
+                bank_name=bank_name,
+                bank_edrpou=str(bank_edrpou) if bank_edrpou else None,
+                owner=owner,
+            ))
 
     return ParsedDeclaration(
-        document_id=str(data.get("id") or raw.get("id") or ""),
+        document_id=str(raw.get("id") or data.get("id") or ""),
         declarant_name=declarant_name,
         declaration_type=declaration_type,
         declaration_year=declaration_year,
@@ -425,7 +577,13 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
         incomes=incomes,
         cash_usd=cash_usd,
         cash_uah=cash_uah,
+        cash_eur=cash_eur,
+        cash_other=cash_other,
+        family_members=family_members,
         family_members_declared=family_members_declared,
+        properties=properties,
+        vehicles=vehicles,
+        bank_accounts=bank_accounts,
         raw=raw,
     )
 
@@ -625,6 +783,17 @@ class CatalaAnalyzer:
                 "Section 2.2 (family members) is empty — "
                 "verify declarant is genuinely single with no cohabiting persons"
             )
+        else:
+            # Check if any income recipient is a family member not listed in step_2
+            declared_ids = {m.member_id for m in self.decl.family_members}
+            for inc in self.decl.incomes:
+                if inc.recipient.startswith("family_member_"):
+                    fid = inc.recipient.split("_")[-1]
+                    if fid not in declared_ids:
+                        result.warnings.append(
+                            f"Income '{inc.source_name}' {inc.amount_uah:,.0f} UAH "
+                            f"attributed to undeclared family member id={fid}"
+                        )
 
     # ------------------------------------------------------------------
     # Cash assets plausibility

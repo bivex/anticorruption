@@ -28,6 +28,7 @@ BOLD   = "\033[1m"
 DIM    = "\033[2m"
 RESET  = "\033[0m"
 
+DECL_TYPES = {1: "річна", 2: "кандидат", 3: "виїзна", 4: "коригуюча", 0: "позачергова"}
 SUBSISTENCE_2025 = Decimal("3028")
 
 
@@ -39,7 +40,7 @@ def _dim(s: str) -> str:   return f"{DIM}{s}{RESET}"
 
 
 # ── single declaration report ─────────────────────────────────────────────────
-def report(decl: ParsedDeclaration, result: AnalysisResult, verbose: bool = False) -> None:
+def report(decl: ParsedDeclaration, result: AnalysisResult, verbose: bool = False, decl_type: int = 1) -> None:
     total_salary = sum(
         i.amount_uah for i in decl.incomes
         if i.income_type in ("salary", "monetary_allowance")
@@ -57,7 +58,8 @@ def report(decl: ParsedDeclaration, result: AnalysisResult, verbose: bool = Fals
     else:
         status = _ok("✓  чисто")
 
-    print(f"  {decl.declaration_year}  {decl.position[:40]:40s}  "
+    dtype_str = DECL_TYPES.get(decl_type, str(decl_type))
+    print(f"  {decl.declaration_year} [{dtype_str:11s}]  {decl.position[:35]:35s}  "
           f"зп={total_salary:>10,.0f}  "
           f"готівка={total_cash:>10,.0f}  "
           f"інше={other_income:>9,.0f}  {status}")
@@ -179,7 +181,7 @@ def main() -> None:
         result = CatalaAnalyzer(decl).analyze()
         print(_hdr(f"\n{decl.declarant_name}  —  {decl.work_place}"))
         print(_hdr("─" * 100))
-        report(decl, result, verbose=True)
+        report(decl, result, verbose=True, decl_type=raw.get("declaration_type", 1))
         summary_table([(decl, result)])
         return
 
@@ -203,23 +205,25 @@ def main() -> None:
         print(_warn("  Нічого не знайдено"))
         return
 
-    # deduplicate: keep latest per year
-    seen: dict[int, dict] = {}
-    for d in docs:
-        yr = d.get("declaration_year", 0)
-        dtype = d.get("declaration_type", 99)
-        # prefer annual (type=1) over others; within same type keep latest
-        prev = seen.get(yr)
-        if prev is None:
-            seen[yr] = d
-        else:
-            prev_type = prev.get("declaration_type", 99)
-            if dtype == 1 and prev_type != 1:
+    # deduplicate: by default keep latest annual (type=1) per year
+    # with --all flag keep ALL declarations (all types, no dedup)
+    if args.all:
+        sorted_docs = sorted(docs, key=lambda x: (x.get("declaration_year", 0), x.get("date", "")))
+    else:
+        seen: dict[int, dict] = {}
+        for d in docs:
+            yr = d.get("declaration_year", 0)
+            dtype = d.get("declaration_type", 99)
+            prev = seen.get(yr)
+            if prev is None:
                 seen[yr] = d
-            elif dtype == prev_type and d.get("date", "") > prev.get("date", ""):
-                seen[yr] = d
-
-    sorted_docs = sorted(seen.values(), key=lambda x: x.get("declaration_year", 0))
+            else:
+                prev_type = prev.get("declaration_type", 99)
+                if dtype == 1 and prev_type != 1:
+                    seen[yr] = d
+                elif dtype == prev_type and d.get("date", "") > prev.get("date", ""):
+                    seen[yr] = d
+        sorted_docs = sorted(seen.values(), key=lambda x: x.get("declaration_year", 0))
 
     # ── list only ──
     if args.list:
@@ -250,7 +254,7 @@ def main() -> None:
                 print(_hdr(f"\n{name}  —  {decl.work_place}"))
                 print(_hdr(f"ЄДРПОУ: {decl.work_place_edrpou}  Регіон: {decl.registration_region}"))
                 print(_hdr("─" * 100))
-            report(decl, result, verbose=args.verbose)
+            report(decl, result, verbose=args.verbose, decl_type=d.get("declaration_type", 1))
             rows.append((decl, result))
         except Exception as e:
             print(_warn(f"  [помилка {doc_id}: {e}]"))

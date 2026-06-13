@@ -280,6 +280,11 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
     """
     data = raw.get("data", raw)
 
+    # Top-level fields (list API duplicates these outside 'data')
+    declaration_year_top = raw.get("declaration_year") or raw.get("declaration_year")
+    declaration_type_top = raw.get("declaration_type")
+    date_top = raw.get("date") or raw.get("lastmodified_date")
+
     def step(n: int) -> dict:
         key = f"step_{n}"
         s = data.get(key, {})
@@ -288,39 +293,49 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
             return s["data"]
         return s if isinstance(s, dict) else {}
 
-    # Step 1 — declaration type
+    # Step 1 — declarant info + declaration meta (list API puts everything here)
     s1 = step(1)
     decl_type_raw = (
-        data.get("declaration_type")
+        declaration_type_top
+        or data.get("declaration_type")
         or s1.get("declarationType", "")
     )
     decl_type_map = {"1": "annual", "2": "candidate", "3": "exit", "4": "family"}
     declaration_type = decl_type_map.get(str(decl_type_raw), str(decl_type_raw))
 
-    declaration_year = int(data.get("declaration_year") or s1.get("declarationYear") or 0)
+    declaration_year = int(
+        declaration_year_top
+        or data.get("declaration_year")
+        or s1.get("declarationYear")
+        or 0
+    )
 
     # Submission date
     submitted_date = None
-    date_raw = data.get("date") or data.get("lastmodified_date")
+    date_raw = date_top or data.get("date") or data.get("lastmodified_date")
     if date_raw:
         try:
             submitted_date = datetime.date.fromisoformat(str(date_raw)[:10])
         except Exception:
             pass
 
-    # Step 2.1 — declarant info
-    s2 = step(2)
-    declarant_name = (
-        data.get("declarant_name")
-        or (s2.get("lastname", "") + " " + s2.get("firstname", "") + " " + s2.get("middlename", "")).strip()
-        or "Unknown"
-    )
+    # Step 1 / step 2.1 — declarant name
+    # List API: lastname is full name in one field; full doc splits into parts
+    lastname = s1.get("lastname", "")
+    firstname = s1.get("firstname", "")
+    middlename = s1.get("middlename", "")
+    if firstname or middlename:
+        declarant_name = f"{lastname} {firstname} {middlename}".strip()
+    else:
+        # full name already in lastname field
+        declarant_name = lastname.strip() or "Unknown"
+
     work_place = (
         data.get("workPlace")
-        or s2.get("workPlace", {}).get("value", "")
+        or (s1.get("workPlace", {}).get("value", "") if isinstance(s1.get("workPlace"), dict) else s1.get("workPlace", ""))
         or ""
     )
-    position = s2.get("workPost", "")
+    position = s1.get("workPost", "")
 
     # Step 2.2 — family members
     s2_2 = data.get("step_2_2", {})
@@ -332,45 +347,45 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
     s11 = step(11)
     incomes: list[IncomeItem] = []
 
-    income_entries = s11 if isinstance(s11, list) else s11.get("incomes", [])
-    if isinstance(s11, dict):
-        # Sometimes it's a dict with numeric keys
+    # step_11 is a list of income entries directly
+    if isinstance(s11, list):
+        income_entries = s11
+    elif isinstance(s11, dict):
         income_entries = [v for k, v in s11.items() if isinstance(v, dict)]
+    else:
+        income_entries = []
 
     for entry in income_entries:
         if not isinstance(entry, dict):
             continue
-        source = entry.get("source", {}) or {}
-        if isinstance(source, str):
-            source_name = source
-            source_edrpou = None
-            source_type = "unknown"
-        else:
-            source_name = (
-                source.get("ukrName")
-                or source.get("citizen_pib")
-                or source.get("ua_company_name")
-                or source.get("objectType", "")
-            )
-            source_edrpou = source.get("ua_company_code")
-            source_type = source.get("objectType", "unknown")
 
-        income_type_raw = entry.get("incomeType", {})
-        if isinstance(income_type_raw, dict):
-            income_type_raw = income_type_raw.get("value", "")
+        # Source info is in entry['sources'][0]
+        sources = entry.get("sources", [])
+        src = sources[0] if sources else {}
+
+        source_name = (
+            src.get("source_ua_company_name")
+            or (
+                " ".join(filter(None, [
+                    src.get("source_ua_lastname", ""),
+                    src.get("source_ua_firstname", ""),
+                    src.get("source_ua_middlename", ""),
+                ])).strip()
+            )
+            or src.get("source_citizen", "unknown")
+        )
+        source_edrpou = src.get("source_ua_company_code")
+        source_type = src.get("source_citizen", "unknown")
+
+        income_type_raw = entry.get("objectType", "")
         income_type = _normalize_income_type(str(income_type_raw))
 
         amount = _parse_money(entry.get("sizeIncome") or entry.get("amount"))
 
-        recipient_info = entry.get("person", {}) or {}
-        if isinstance(recipient_info, str):
-            recipient = recipient_info
-        else:
-            recipient = (
-                recipient_info.get("pib")
-                or recipient_info.get("citizen_pib")
-                or declarant_name
-            )
+        # person_who_care: "1" = declarant, "2" = family member etc.
+        persons = entry.get("person_who_care", [{"person": "1"}])
+        person_code = persons[0].get("person", "1") if persons else "1"
+        recipient = declarant_name if person_code == "1" else f"family_member_{person_code}"
 
         incomes.append(IncomeItem(
             source_name=str(source_name),
@@ -659,6 +674,7 @@ def _cli() -> None:
     p_search.add_argument("--year", type=int, help="Declaration year")
     p_search.add_argument("--edrpou", help="Workplace EDRPOU code")
     p_search.add_argument("--analyze", action="store_true", help="Run Catala rules on each result")
+    p_search.add_argument("--limit", type=int, default=10, help="Max results (default 10)")
 
     # analyze-json
     p_aj = sub.add_parser("analyze-json", help="Analyze a declaration JSON file")
@@ -682,13 +698,22 @@ def _cli() -> None:
         found = 0
         for doc in client.iter_documents(**kwargs):
             found += 1
+            doc_id = doc.get("id", "")
+            # list API returns shallow docs — fetch full for analysis
+            if args.analyze and doc_id:
+                try:
+                    doc = client.get_document(doc_id)
+                except Exception:
+                    pass
             decl = parse_declaration(doc)
             if args.analyze:
                 result = CatalaAnalyzer(decl).analyze()
                 print(result.summary())
                 print()
             else:
-                print(f"{doc.get('id', '?')}  {decl.declarant_name}  {decl.declaration_year}  {decl.work_place}")
+                print(f"{doc_id}  {decl.declarant_name}  {decl.declaration_year}  {decl.work_place}")
+            if hasattr(args, "limit") and args.limit and found >= args.limit:
+                break
         if not found:
             print("No results.")
 

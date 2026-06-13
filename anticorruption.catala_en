@@ -1,0 +1,731 @@
+# Закон України "Про запобігання корупції"
+# Law of Ukraine "On Prevention of Corruption"
+#
+# Encodes COMPUTABLE provisions only:
+#   Art.23  — gift caps
+#   Art.25  — side-activity termination deadline
+#   Art.26  — post-employment cooling-off (1 year)
+#   Art.27  — close-persons conflict resolution deadlines
+#   Art.28  — conflict-of-interest notification timelines
+#   Art.36  — corporate-rights transfer deadline
+#   Art.45  — declaration filing deadlines
+#   Art.46  — declaration disclosure thresholds
+#   Art.16  — NACP salary multipliers
+#
+# Non-computable provisions (institutional structure, ethics principles,
+# whistleblower procedures, criminal liability) are omitted.
+#
+# Duration syntax: N day / N month / N year  (no parentheses or multiply)
+# Optional syntax: optional of T; Absent / Present content x
+# Catala locale  : English (.catala_en)
+# Prose language : Ukrainian per the source law
+
+```catala-metadata
+declaration enumeration DeclarationKind:
+  -- Annual
+  -- Exit
+  -- Candidate
+  -- ElectedLocalOfficial
+  -- CommissionMember
+  -- OligarchRegistryEntry
+  -- JudgeReserve
+  -- WarStateDeferred
+
+declaration structure GiftEvent:
+  data gift_value content money
+  data annual_from_same_source content money
+  data from_close_person content boolean
+  data is_publicly_accessible_discount content boolean
+  data is_official_travel_reimbursement content boolean
+
+declaration structure SubsistenceMinimum:
+  data on_jan1_of_year content money
+  data on_gift_day content money
+
+declaration structure NacpPosition:
+  data is_head content boolean
+  data is_deputy_head content boolean
+  data is_apparatus_head content boolean
+  data is_territorial_head content boolean
+  data is_apparatus_deputy_head content boolean
+  data is_internal_control_head content boolean
+  data is_territorial_deputy_head content boolean
+  data is_department_head content boolean
+  data is_other content boolean
+```
+
+## Розділ IV. Запобігання корупційним та пов'язаним з корупцією правопорушенням
+
+### Стаття 23. Обмеження щодо одержання подарунків
+
+```catala-metadata
+declaration scope GiftRestriction:
+  input gift content GiftEvent
+  input subsistence_min content SubsistenceMinimum
+  output single_cap content money
+  output annual_cap content money
+  output is_exempt content boolean
+  output exceeds_single_cap content boolean
+  output exceeds_annual_cap content boolean
+  output is_prohibited content boolean
+```
+
+Частина 2 статті 23.
+Особи можуть приймати подарунки, які відповідають загальновизнаним уявленням
+про гостинність, якщо вартість таких подарунків одноразово не перевищує двох
+прожиткових мінімумів для працездатних осіб, встановлених на день прийняття
+подарунка, а сукупна вартість подарунків від однієї особи (групи осіб) протягом
+року не перевищує чотирьох прожиткових мінімумів, встановлених на 1 січня
+відповідного року.
+Виняток: подарунки від близьких осіб, загальнодоступні знижки/виграші,
+відшкодування витрат на службове відрядження (абз.2-4 ч.2 ст.23).
+
+```catala
+scope GiftRestriction:
+
+  definition single_cap equals
+    subsistence_min.on_gift_day * (decimal of 2)
+
+  definition annual_cap equals
+    subsistence_min.on_jan1_of_year * (decimal of 4)
+
+  definition is_exempt equals
+    gift.from_close_person or
+    gift.is_publicly_accessible_discount or
+    gift.is_official_travel_reimbursement
+
+  definition exceeds_single_cap equals
+    (not is_exempt) and (gift.gift_value > single_cap)
+
+  definition exceeds_annual_cap equals
+    (not is_exempt) and (gift.annual_from_same_source > annual_cap)
+
+  definition is_prohibited equals
+    exceeds_single_cap or exceeds_annual_cap
+```
+
+### Стаття 25. Обмеження щодо сумісництва та суміщення з іншими видами діяльності
+
+```catala-metadata
+declaration scope SideActivityRestriction:
+  input appointment_date content date
+  output side_activity_termination_deadline content date
+```
+
+Частина 2 статті 25.
+Особа, призначена (обрана) на посаду, зобов'язана не пізніше 15 робочих днів
+з дня призначення (обрання) вжити заходів для припинення підприємницької
+діяльності. Апроксимація: 15 робочих днів ≈ 21 календарний день.
+
+```catala
+scope SideActivityRestriction:
+  definition side_activity_termination_deadline equals
+    appointment_date + 21 day
+```
+
+### Стаття 26. Обмеження після припинення діяльності
+
+```catala-metadata
+declaration scope PostEmploymentRestriction:
+  input cessation_date content date
+  output employment_ban_end content date
+  output representation_ban_end content date
+```
+
+Частина 1 пункти 1 та 3 статті 26.
+Особам, які припинили діяльність, пов'язану з виконанням функцій держави або
+місцевого самоврядування, забороняється протягом року:
+1) укладати трудові договори або правочини з юридичними особами, щодо яких ці
+   особи здійснювали контроль, нагляд або приймали відповідні рішення;
+3) представляти інтереси будь-якої особи у справах в органах, де вони раніше
+   працювали.
+
+```catala
+scope PostEmploymentRestriction:
+  definition employment_ban_end equals
+    cessation_date + 12 month
+
+  definition representation_ban_end equals
+    cessation_date + 12 month
+```
+
+### Стаття 27. Обмеження спільної роботи близьких осіб
+
+```catala-metadata
+declaration scope ClosePersonsConflict:
+  input conflict_arose_date content date
+  output voluntary_resolution_deadline content date
+  output mandatory_transfer_deadline content date
+```
+
+Частина 2 статті 27.
+У разі виникнення обставин, що порушують вимоги щодо прямого підпорядкування
+близьких осіб, відповідні особи вживають заходів у п'ятнадцятиденний строк.
+Якщо добровільно не усунуто — переведення в місячний строк з моменту виникнення.
+
+```catala
+scope ClosePersonsConflict:
+  definition voluntary_resolution_deadline equals
+    conflict_arose_date + 15 day
+
+  definition mandatory_transfer_deadline equals
+    conflict_arose_date + 1 month
+```
+
+### Стаття 28. Строки повідомлення та реагування щодо конфлікту інтересів
+
+```catala-metadata
+declaration scope ConflictOfInterestTimeline:
+  input conflict_discovered_date content date
+  output notification_deadline content date
+  output supervisor_decision_deadline content date
+  output nacp_clarification_deadline content date
+```
+
+Частина 1 п.2, частини 3 та 4 статті 28.
+Особа зобов'язана повідомити не пізніше наступного робочого дня з моменту
+виявлення конфлікту інтересів. Безпосередній керівник — протягом двох робочих
+днів. НАЗК — упродовж семи робочих днів.
+Апроксимація: робочі дні ≈ календарні дні.
+
+```catala
+scope ConflictOfInterestTimeline:
+  definition notification_deadline equals
+    conflict_discovered_date + 1 day
+
+  definition supervisor_decision_deadline equals
+    notification_deadline + 2 day
+
+  definition nacp_clarification_deadline equals
+    notification_deadline + 7 day
+```
+
+### Стаття 36. Передача підприємств та корпоративних прав
+
+```catala-metadata
+declaration scope CorporateRightsTransfer:
+  input appointment_date content date
+  output transfer_deadline content date
+  output nacp_notification_deadline content date
+```
+
+Частина 1 статті 36.
+Особи, зазначені у пункті 1, підпункті "а" пункту 2 ч.1 ст.3, зобов'язані
+протягом 60 днів після призначення (обрання) передати в управління іншій особі
+належні їм підприємства та корпоративні права.
+Частина 5 статті 36: в одноденний термін після передачі — письмово повідомити
+НАЗК з нотаріально засвідченою копією договору.
+
+```catala
+scope CorporateRightsTransfer:
+  definition transfer_deadline equals
+    appointment_date + 60 day
+
+  definition nacp_notification_deadline equals
+    transfer_deadline + 1 day
+```
+
+## Розділ VII. Фінансовий контроль
+
+### Стаття 45. Подання декларацій — строки
+
+```catala-metadata
+declaration scope DeclarationDeadline:
+  input kind content DeclarationKind
+  input reference_date content date
+  output filing_deadline content date
+```
+
+Стаття 45, строки подання декларацій:
+- Annual (ч.1): до 1 квітня наступного за звітним роком
+  (reference_date = 1 січня звітного року).
+- Exit (ч.2): протягом 30 календарних днів з дня припинення діяльності.
+- Candidate (ч.3 абз.1): до призначення або обрання
+  (reference_date = дата призначення; дедлайн = та сама дата).
+- ElectedLocalOfficial (ч.3 абз.1): впродовж 15 календарних днів з дня
+  набуття повноважень.
+- CommissionMember (ч.3 абз.2): протягом 10 календарних днів після входження
+  до складу комісії.
+- OligarchRegistryEntry (ч.3 абз.4): протягом 10 календарних днів з дня
+  включення до Реєстру олігархів.
+- JudgeReserve (ч.3 абз.6): щорічно до 1 квітня
+  (reference_date = дата включення до резерву).
+- WarStateDeferred (ч.7-13): не пізніше 90 календарних днів з дня настання
+  відповідної обставини.
+
+```catala
+scope DeclarationDeadline:
+  definition filing_deadline equals
+    match kind with pattern
+    -- Annual:
+      Date.of_year_month_day of (Date.get_year of reference_date + 1, 4, 1)
+    -- Exit:
+      reference_date + 30 day
+    -- Candidate:
+      reference_date
+    -- ElectedLocalOfficial:
+      reference_date + 15 day
+    -- CommissionMember:
+      reference_date + 10 day
+    -- OligarchRegistryEntry:
+      reference_date + 10 day
+    -- JudgeReserve:
+      Date.of_year_month_day of (Date.get_year of reference_date + 1, 4, 1)
+    -- WarStateDeferred:
+      reference_date + 90 day
+```
+
+### Стаття 45 частина 4. Виправлені декларації
+
+```catala-metadata
+declaration scope CorrectedDeclarationDeadline:
+  input original_filing_date content date
+  input court_order_date content optional of date
+  output voluntary_correction_deadline content date
+  output court_ordered_resubmission_deadline content date
+```
+
+Частина 4 статті 45.
+Упродовж 30 днів після подання декларації суб'єкт декларування має право
+подати виправлену декларацію. У разі притягнення до відповідальності або
+виявлення недостовірності рішенням суду — зобов'язаний подати виправлену
+декларацію протягом 10 днів з дня набрання рішенням законної сили.
+
+```catala
+scope CorrectedDeclarationDeadline:
+  definition voluntary_correction_deadline equals
+    original_filing_date + 30 day
+
+  definition court_ordered_resubmission_deadline equals
+    match court_order_date with pattern
+    -- Absent: original_filing_date
+    -- Present content court_date: court_date + 10 day
+```
+
+### Стаття 46. Порогові значення для декларування
+
+```catala-metadata
+declaration scope DeclarationThresholds:
+  input subsistence_min_jan1 content money
+  output movable_property_threshold content money
+  output gift_income_threshold content money
+  output cash_assets_exemption_ceiling content money
+  output financial_obligations_threshold content money
+  output expenditure_threshold content money
+```
+
+Частина 1 статті 46:
+- п.3: цінне рухоме майно понад 100 прожиткових мінімумів на 1 січня
+  (транспортні засоби декларуються незалежно від вартості).
+- п.7: подарунок як дохід — понад 5 прожиткових мінімумів на 1 січня.
+- п.8: грошові активи — не декларуються якщо сукупно не перевищують
+  50 прожиткових мінімумів на 1 січня.
+- п.9: фінансові зобов'язання — понад 50 прожиткових мінімумів на 1 січня.
+- п.10: видатки — понад 50 прожиткових мінімумів на 1 січня.
+
+```catala
+scope DeclarationThresholds:
+  definition movable_property_threshold equals
+    subsistence_min_jan1 * (decimal of 100)
+
+  definition gift_income_threshold equals
+    subsistence_min_jan1 * (decimal of 5)
+
+  definition cash_assets_exemption_ceiling equals
+    subsistence_min_jan1 * (decimal of 50)
+
+  definition financial_obligations_threshold equals
+    subsistence_min_jan1 * (decimal of 50)
+
+  definition expenditure_threshold equals
+    subsistence_min_jan1 * (decimal of 50)
+```
+
+## Розділ II. НАЗК — Стаття 16. Оплата праці
+
+### Стаття 16. Посадові оклади працівників Національного агентства
+
+```catala-metadata
+declaration scope NacpSalary:
+  input position content NacpPosition
+  input subsistence_min_jan1 content money
+  output base_salary content money
+```
+
+Частина 2 статті 16. Посадові оклади відповідно до прожиткового мінімуму
+для працездатних осіб на 1 січня:
+- Голова — 40;
+- заступник Голови, керівник апарату — 30;
+- керівник територіального органу, заступник керівника апарату,
+  керівник підрозділу внутрішнього контролю — 25;
+- заступник керівника територіального органу, керівник самостійного
+  структурного підрозділу апарату, заступник керівника підрозділу
+  внутрішнього контролю — 20.
+
+```catala
+scope NacpSalary:
+  definition base_salary equals
+    if position.is_head then
+      subsistence_min_jan1 * (decimal of 40)
+    else if position.is_deputy_head or position.is_apparatus_head then
+      subsistence_min_jan1 * (decimal of 30)
+    else if position.is_territorial_head or
+            position.is_apparatus_deputy_head or
+            position.is_internal_control_head then
+      subsistence_min_jan1 * (decimal of 25)
+    else if position.is_territorial_deputy_head or
+            position.is_department_head then
+      subsistence_min_jan1 * (decimal of 20)
+    else
+      subsistence_min_jan1 * (decimal of 0)
+```
+
+## Тести / Tests
+
+```catala-metadata
+#[test]
+declaration scope TestGiftAllowed:
+  output result content GiftRestriction
+
+#[test]
+declaration scope TestGiftProhibited:
+  output result content GiftRestriction
+
+#[test]
+declaration scope TestGiftFromClosePersonExempt:
+  output result content GiftRestriction
+
+#[test]
+declaration scope TestDeclarationThresholds:
+  output result content DeclarationThresholds
+
+#[test]
+declaration scope TestPostEmployment:
+  output result content PostEmploymentRestriction
+
+#[test]
+declaration scope TestDeclarationAnnual:
+  output result content DeclarationDeadline
+
+#[test]
+declaration scope TestDeclarationExit:
+  output result content DeclarationDeadline
+
+#[test]
+declaration scope TestDeclarationElected:
+  output result content DeclarationDeadline
+
+#[test]
+declaration scope TestDeclarationWarDeferred:
+  output result content DeclarationDeadline
+
+#[test]
+declaration scope TestCorporateTransfer:
+  output result content CorporateRightsTransfer
+
+#[test]
+declaration scope TestClosePersonsConflict:
+  output result content ClosePersonsConflict
+
+#[test]
+declaration scope TestCorrectedDeclarationVoluntary:
+  output result content CorrectedDeclarationDeadline
+
+#[test]
+declaration scope TestCorrectedDeclarationCourt:
+  output result content CorrectedDeclarationDeadline
+
+#[test]
+declaration scope TestNacpHead:
+  output result content NacpSalary
+
+#[test]
+declaration scope TestNacpDeputy:
+  output result content NacpSalary
+
+#[test]
+declaration scope TestNacpTerritorialHead:
+  output result content NacpSalary
+
+#[test]
+declaration scope TestNacpDepartmentHead:
+  output result content NacpSalary
+```
+
+Тест 1: подарунок 3000 < ліміт 6056 (2 × 3028) — не заборонений.
+
+```catala
+scope TestGiftAllowed:
+  definition result equals
+    output of GiftRestriction with {
+      -- gift: GiftEvent {
+        -- gift_value: $3,000.00
+        -- annual_from_same_source: $3,000.00
+        -- from_close_person: false
+        -- is_publicly_accessible_discount: false
+        -- is_official_travel_reimbursement: false
+      }
+      -- subsistence_min: SubsistenceMinimum {
+        -- on_jan1_of_year: $3,028.00
+        -- on_gift_day: $3,028.00
+      }
+    }
+  assertion result.is_prohibited = false
+  assertion result.single_cap = $6,056.00
+  assertion result.annual_cap = $12,112.00
+```
+
+Тест 2: подарунок 10000 > ліміт 6056 — заборонений.
+
+```catala
+scope TestGiftProhibited:
+  definition result equals
+    output of GiftRestriction with {
+      -- gift: GiftEvent {
+        -- gift_value: $10,000.00
+        -- annual_from_same_source: $10,000.00
+        -- from_close_person: false
+        -- is_publicly_accessible_discount: false
+        -- is_official_travel_reimbursement: false
+      }
+      -- subsistence_min: SubsistenceMinimum {
+        -- on_jan1_of_year: $3,028.00
+        -- on_gift_day: $3,028.00
+      }
+    }
+  assertion result.is_prohibited = true
+  assertion result.exceeds_single_cap = true
+```
+
+Тест 3: подарунок від близької особи — виняток, не заборонений.
+
+```catala
+scope TestGiftFromClosePersonExempt:
+  definition result equals
+    output of GiftRestriction with {
+      -- gift: GiftEvent {
+        -- gift_value: $100,000.00
+        -- annual_from_same_source: $100,000.00
+        -- from_close_person: true
+        -- is_publicly_accessible_discount: false
+        -- is_official_travel_reimbursement: false
+      }
+      -- subsistence_min: SubsistenceMinimum {
+        -- on_jan1_of_year: $3,028.00
+        -- on_gift_day: $3,028.00
+      }
+    }
+  assertion result.is_prohibited = false
+  assertion result.is_exempt = true
+```
+
+Тест 4: порогові значення при мінімумі 3028 грн.
+
+```catala
+scope TestDeclarationThresholds:
+  definition result equals
+    output of DeclarationThresholds with {
+      -- subsistence_min_jan1: $3,028.00
+    }
+  assertion result.movable_property_threshold = $302,800.00
+  assertion result.gift_income_threshold = $15,140.00
+  assertion result.cash_assets_exemption_ceiling = $151,400.00
+  assertion result.financial_obligations_threshold = $151,400.00
+  assertion result.expenditure_threshold = $151,400.00
+```
+
+Тест 5: заборони після звільнення 13 червня 2026 — до 13 червня 2027.
+
+```catala
+scope TestPostEmployment:
+  definition result equals
+    output of PostEmploymentRestriction with {
+      -- cessation_date: |2026-06-13|
+    }
+  assertion result.employment_ban_end = |2027-06-13|
+  assertion result.representation_ban_end = |2027-06-13|
+```
+
+Тест 6: щорічна декларація за 2025 рік — до 1 квітня 2026.
+
+```catala
+scope TestDeclarationAnnual:
+  definition result equals
+    output of DeclarationDeadline with {
+      -- kind: Annual
+      -- reference_date: |2025-01-01|
+    }
+  assertion result.filing_deadline = |2026-04-01|
+```
+
+Тест 7: декларація при звільненні 13 червня 2026 — до 13 липня 2026.
+
+```catala
+scope TestDeclarationExit:
+  definition result equals
+    output of DeclarationDeadline with {
+      -- kind: Exit
+      -- reference_date: |2026-06-13|
+    }
+  assertion result.filing_deadline = |2026-07-13|
+```
+
+Тест 8: обраний міський голова 1 червня — до 16 червня.
+
+```catala
+scope TestDeclarationElected:
+  definition result equals
+    output of DeclarationDeadline with {
+      -- kind: ElectedLocalOfficial
+      -- reference_date: |2026-06-01|
+    }
+  assertion result.filing_deadline = |2026-06-16|
+```
+
+Тест 9: відстрочення через воєнний стан — 90 днів з 13 червня 2026.
+
+```catala
+scope TestDeclarationWarDeferred:
+  definition result equals
+    output of DeclarationDeadline with {
+      -- kind: WarStateDeferred
+      -- reference_date: |2026-06-13|
+    }
+  assertion result.filing_deadline = |2026-09-11|
+```
+
+Тест 10: передача корпоративних прав — 60 днів з 13 червня 2026.
+
+```catala
+scope TestCorporateTransfer:
+  definition result equals
+    output of CorporateRightsTransfer with {
+      -- appointment_date: |2026-06-13|
+    }
+  assertion result.transfer_deadline = |2026-08-12|
+  assertion result.nacp_notification_deadline = |2026-08-13|
+```
+
+Тест 11: конфлікт через близьких осіб — 15 днів добровільно, 1 місяць примусово.
+
+```catala
+scope TestClosePersonsConflict:
+  definition result equals
+    output of ClosePersonsConflict with {
+      -- conflict_arose_date: |2026-06-13|
+    }
+  assertion result.voluntary_resolution_deadline = |2026-06-28|
+  assertion result.mandatory_transfer_deadline = |2026-07-13|
+```
+
+Тест 12: виправлена декларація — 30 днів добровільно; без рішення суду.
+
+```catala
+scope TestCorrectedDeclarationVoluntary:
+  definition result equals
+    output of CorrectedDeclarationDeadline with {
+      -- original_filing_date: |2026-03-15|
+      -- court_order_date: Absent
+    }
+  assertion result.voluntary_correction_deadline = |2026-04-14|
+```
+
+Тест 13: виправлена декларація за рішенням суду від 1 травня 2026 — до 11 травня.
+
+```catala
+scope TestCorrectedDeclarationCourt:
+  definition result equals
+    output of CorrectedDeclarationDeadline with {
+      -- original_filing_date: |2026-03-15|
+      -- court_order_date: Present content |2026-05-01|
+    }
+  assertion result.court_ordered_resubmission_deadline = |2026-05-11|
+```
+
+Тест 14: оклад Голови НАЗК при мінімумі 3028 грн = 3028 × 40 = 121120.
+
+```catala
+scope TestNacpHead:
+  definition result equals
+    output of NacpSalary with {
+      -- position: NacpPosition {
+        -- is_head: true
+        -- is_deputy_head: false
+        -- is_apparatus_head: false
+        -- is_territorial_head: false
+        -- is_apparatus_deputy_head: false
+        -- is_internal_control_head: false
+        -- is_territorial_deputy_head: false
+        -- is_department_head: false
+        -- is_other: false
+      }
+      -- subsistence_min_jan1: $3,028.00
+    }
+  assertion result.base_salary = $121,120.00
+```
+
+Тест 15: оклад Заступника Голови = 3028 × 30 = 90840.
+
+```catala
+scope TestNacpDeputy:
+  definition result equals
+    output of NacpSalary with {
+      -- position: NacpPosition {
+        -- is_head: false
+        -- is_deputy_head: true
+        -- is_apparatus_head: false
+        -- is_territorial_head: false
+        -- is_apparatus_deputy_head: false
+        -- is_internal_control_head: false
+        -- is_territorial_deputy_head: false
+        -- is_department_head: false
+        -- is_other: false
+      }
+      -- subsistence_min_jan1: $3,028.00
+    }
+  assertion result.base_salary = $90,840.00
+```
+
+Тест 16: оклад керівника територіального органу = 3028 × 25 = 75700.
+
+```catala
+scope TestNacpTerritorialHead:
+  definition result equals
+    output of NacpSalary with {
+      -- position: NacpPosition {
+        -- is_head: false
+        -- is_deputy_head: false
+        -- is_apparatus_head: false
+        -- is_territorial_head: true
+        -- is_apparatus_deputy_head: false
+        -- is_internal_control_head: false
+        -- is_territorial_deputy_head: false
+        -- is_department_head: false
+        -- is_other: false
+      }
+      -- subsistence_min_jan1: $3,028.00
+    }
+  assertion result.base_salary = $75,700.00
+```
+
+Тест 17: оклад керівника структурного підрозділу = 3028 × 20 = 60560.
+
+```catala
+scope TestNacpDepartmentHead:
+  definition result equals
+    output of NacpSalary with {
+      -- position: NacpPosition {
+        -- is_head: false
+        -- is_deputy_head: false
+        -- is_apparatus_head: false
+        -- is_territorial_head: false
+        -- is_apparatus_deputy_head: false
+        -- is_internal_control_head: false
+        -- is_territorial_deputy_head: false
+        -- is_department_head: true
+        -- is_other: false
+      }
+      -- subsistence_min_jan1: $3,028.00
+    }
+  assertion result.base_salary = $60,560.00
+```

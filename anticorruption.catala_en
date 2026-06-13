@@ -729,3 +729,258 @@ scope TestNacpDepartmentHead:
     }
   assertion result.base_salary = $60,560.00
 ```
+
+### Стаття 16 частина 2. Максимальний розмір премії Голови та Заступника Голови НАЗК
+
+```catala-metadata
+declaration scope NacpBonus:
+  input base_salary content money
+  input requested_bonus content money
+  output max_bonus content money
+  output allowed_bonus content money
+```
+
+Частина 2 статті 16.
+Розмір місячної премії Голови, заступника Голови Національного агентства
+не може перевищувати 50 відсотків його посадового окладу.
+
+```catala
+scope NacpBonus:
+  definition max_bonus equals
+    base_salary * 0.5
+
+  definition allowed_bonus equals
+    if requested_bonus > max_bonus then max_bonus
+    else requested_bonus
+```
+
+### Стаття 36 пункт 1¹. Виняток для дрібних пакетів акцій
+
+```catala-metadata
+declaration scope SmallShareholdingExemption:
+  input nominal_value_of_shares content money
+  input voting_share_percent content decimal
+  input subsistence_min_jan1_appointment_year content money
+  output nominal_cap content money
+  output is_exempt_from_transfer content boolean
+```
+
+Пункт 1¹ частини шостої статті 36.
+Вимоги про передачу корпоративних прав не поширюються на осіб, у власності
+яких перебувають акції акціонерного товариства — резидента України, сукупна
+номінальна вартість яких не перевищує 0,25 прожиткового мінімуму для
+працездатних осіб на 1 січня року призначення, та які сукупно не перевищують
+5 відсотків голосуючих акцій товариства.
+
+```catala
+scope SmallShareholdingExemption:
+  definition nominal_cap equals
+    subsistence_min_jan1_appointment_year * 0.25
+
+  definition is_exempt_from_transfer equals
+    (nominal_value_of_shares <= nominal_cap) and
+    (voting_share_percent <= 5.0)
+```
+
+### Стаття 46 примітка. Визначення члена сім'ї суб'єкта декларування
+
+```catala-metadata
+declaration scope FamilyMemberStatus:
+  input is_spouse content boolean
+  input is_minor_child content boolean
+  input cohabiting_on_last_day content boolean
+  input cohabitation_days_preceding_last_day content integer
+  input total_cohabitation_days_in_year content integer
+  output qualifies_as_family_member content boolean
+```
+
+Примітка до статті 46.
+Членами сім'ї суб'єкта декларування (крім подружжя та неповнолітніх дітей)
+вважаються особи, які:
+- спільно проживали із суб'єктом декларування станом на останній день
+  звітного періоду (за умови спільного проживання впродовж не менше 30
+  календарних днів, що передували останньому дню звітного періоду), АБО
+- сукупно проживали не менше 183 днів протягом року, що передує року
+  подання декларації.
+Подружжя та неповнолітні діти є членами сім'ї безумовно.
+
+```catala
+scope FamilyMemberStatus:
+  definition qualifies_as_family_member equals
+    if is_spouse or is_minor_child then
+      true
+    else if cohabiting_on_last_day and
+            (cohabitation_days_preceding_last_day >= 30) then
+      true
+    else
+      total_cohabitation_days_in_year >= 183
+```
+
+## Додаткові тести / Additional Tests
+
+```catala-metadata
+#[test]
+declaration scope TestNacpBonusWithinCap:
+  output result content NacpBonus
+
+#[test]
+declaration scope TestNacpBonusExceedsCap:
+  output result content NacpBonus
+
+#[test]
+declaration scope TestSmallShareholdingExemptYes:
+  output result content SmallShareholdingExemption
+
+#[test]
+declaration scope TestSmallShareholdingExemptNo:
+  output result content SmallShareholdingExemption
+
+#[test]
+declaration scope TestFamilyMemberSpouse:
+  output result content FamilyMemberStatus
+
+#[test]
+declaration scope TestFamilyMemberCohabitingLongEnough:
+  output result content FamilyMemberStatus
+
+#[test]
+declaration scope TestFamilyMemberCohabitingTooShort:
+  output result content FamilyMemberStatus
+
+#[test]
+declaration scope TestFamilyMember183Days:
+  output result content FamilyMemberStatus
+
+#[test]
+declaration scope TestFamilyMemberNeitherCondition:
+  output result content FamilyMemberStatus
+```
+
+Тест 18: премія в межах ліміту — запитано 50000, ліміт 60560 (50% від 121120).
+
+```catala
+scope TestNacpBonusWithinCap:
+  definition result equals
+    output of NacpBonus with {
+      -- base_salary: $121,120.00
+      -- requested_bonus: $50,000.00
+    }
+  assertion result.max_bonus = $60,560.00
+  assertion result.allowed_bonus = $50,000.00
+```
+
+Тест 19: премія перевищує ліміт — запитано 80000, обрізається до 60560.
+
+```catala
+scope TestNacpBonusExceedsCap:
+  definition result equals
+    output of NacpBonus with {
+      -- base_salary: $121,120.00
+      -- requested_bonus: $80,000.00
+    }
+  assertion result.max_bonus = $60,560.00
+  assertion result.allowed_bonus = $60,560.00
+```
+
+Тест 20: дрібний пакет акцій — номінал 500 < 757 (0.25 × 3028), частка 3% < 5% — виняток.
+
+```catala
+scope TestSmallShareholdingExemptYes:
+  definition result equals
+    output of SmallShareholdingExemption with {
+      -- nominal_value_of_shares: $500.00
+      -- voting_share_percent: 3.0
+      -- subsistence_min_jan1_appointment_year: $3,028.00
+    }
+  assertion result.nominal_cap = $757.00
+  assertion result.is_exempt_from_transfer = true
+```
+
+Тест 21: пакет акцій перевищує поріг — номінал 1000 > 757 — виняток не діє.
+
+```catala
+scope TestSmallShareholdingExemptNo:
+  definition result equals
+    output of SmallShareholdingExemption with {
+      -- nominal_value_of_shares: $1,000.00
+      -- voting_share_percent: 3.0
+      -- subsistence_min_jan1_appointment_year: $3,028.00
+    }
+  assertion result.is_exempt_from_transfer = false
+```
+
+Тест 22: подружжя — завжди член сім'ї.
+
+```catala
+scope TestFamilyMemberSpouse:
+  definition result equals
+    output of FamilyMemberStatus with {
+      -- is_spouse: true
+      -- is_minor_child: false
+      -- cohabiting_on_last_day: false
+      -- cohabitation_days_preceding_last_day: 0
+      -- total_cohabitation_days_in_year: 0
+    }
+  assertion result.qualifies_as_family_member = true
+```
+
+Тест 23: спільне проживання на останній день + 45 днів до того — член сім'ї.
+
+```catala
+scope TestFamilyMemberCohabitingLongEnough:
+  definition result equals
+    output of FamilyMemberStatus with {
+      -- is_spouse: false
+      -- is_minor_child: false
+      -- cohabiting_on_last_day: true
+      -- cohabitation_days_preceding_last_day: 45
+      -- total_cohabitation_days_in_year: 45
+    }
+  assertion result.qualifies_as_family_member = true
+```
+
+Тест 24: спільне проживання на останній день, але лише 20 днів до того — не достатньо.
+Але 183 дні за рік також не набрано — не член сім'ї.
+
+```catala
+scope TestFamilyMemberCohabitingTooShort:
+  definition result equals
+    output of FamilyMemberStatus with {
+      -- is_spouse: false
+      -- is_minor_child: false
+      -- cohabiting_on_last_day: true
+      -- cohabitation_days_preceding_last_day: 20
+      -- total_cohabitation_days_in_year: 20
+    }
+  assertion result.qualifies_as_family_member = false
+```
+
+Тест 25: не проживає на останній день, але 200 днів за рік — член сім'ї.
+
+```catala
+scope TestFamilyMember183Days:
+  definition result equals
+    output of FamilyMemberStatus with {
+      -- is_spouse: false
+      -- is_minor_child: false
+      -- cohabiting_on_last_day: false
+      -- cohabitation_days_preceding_last_day: 0
+      -- total_cohabitation_days_in_year: 200
+    }
+  assertion result.qualifies_as_family_member = true
+```
+
+Тест 26: жодна умова не виконана — не член сім'ї.
+
+```catala
+scope TestFamilyMemberNeitherCondition:
+  definition result equals
+    output of FamilyMemberStatus with {
+      -- is_spouse: false
+      -- is_minor_child: false
+      -- cohabiting_on_last_day: false
+      -- cohabitation_days_preceding_last_day: 0
+      -- total_cohabitation_days_in_year: 100
+    }
+  assertion result.qualifies_as_family_member = false
+```

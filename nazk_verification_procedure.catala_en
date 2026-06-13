@@ -1,0 +1,549 @@
+# NAZK Full Declaration Verification Procedure
+# Order No. 26/21 of 29.01.2021 (as amended through No. 260/25 of 01.09.2025)
+# "On Approval of the Procedure for Full Verification of Declarations"
+
+```catala
+declaration structure VerificationSubject:
+  data declaration_id content text
+  data declarant_name content text
+  data declaration_year content integer
+  data declaration_type content integer
+  # 1=annual, 2=candidate, 3=exit, 4=corrected, 0=extraordinary
+  data submitted_date content date
+  data risk_score content decimal
+  data is_high_risk_position content boolean
+  # Art.3 p.1 persons (deputies, ministers, judges, prosecutors, police chiefs etc.)
+
+declaration structure VerificationFinding:
+  data finding_type content FindingType
+  data description content text
+  data amount_uah content money
+  data law_reference content text
+
+declaration enumeration FindingType:
+  -- InaccurateData
+  -- FalseData
+  -- AssetValuationError
+  -- ConflictOfInterest
+  -- GiftLimitViolation
+  -- SecondJobViolation
+  -- IllegalEnrichmentSigns
+  -- UnjustifiedAssetSigns
+
+declaration enumeration VerificationResult:
+  -- Clean
+  -- InaccurateDataFound
+  -- FalseDataFound
+  -- AdministrativeOffense
+  -- CriminalOffense
+  -- UnjustifiedAssets
+  -- Terminated
+
+declaration structure VerificationCase:
+  data subject content VerificationSubject
+  data start_date content date
+  data assigned_officer content text
+  data is_automated content boolean
+  data findings content list of VerificationFinding
+  data declarant_response_received content boolean
+  data declarant_response_date content date
+  data extension_count content integer
+  data is_suspended content boolean
+  # suspended due to military service or legal prohibition
+
+declaration structure DeadlineCalc:
+  data base_days content integer
+  data max_extension_days content integer
+  data response_deadline_days content integer
+  data report_deadline_days content integer
+  data approval_deadline_days content integer
+  data publication_deadline_days content integer
+```
+
+## Section I. General Provisions — Key Thresholds
+
+> Article I §2: "false data" threshold = 150 subsistence minimums
+
+```catala
+declaration scope FalseDataThreshold:
+  input subsistence_minimum content money
+  output threshold content money
+
+scope FalseDataThreshold:
+  definition threshold equals
+    subsistence_minimum * 150
+```
+
+> Article I §2: "inaccurate data" threshold = below 150 subsistence minimums
+
+```catala
+declaration scope InaccurateDataThreshold:
+  input subsistence_minimum content money
+  output threshold content money
+
+scope InaccurateDataThreshold:
+  definition threshold equals
+    subsistence_minimum * 150
+  # inaccurate = discrepancy < threshold (or unidentifiable subject/object)
+  # false = discrepancy >= threshold (or unidentifiable subject/object)
+```
+
+## Section II. Risk Assessment
+
+> Article II §1: Risk score calculated automatically by Registry software
+
+> Article II §2: Four stages of risk assessment
+
+```catala
+declaration scope RiskAssessment:
+  input risk_score content decimal
+  input is_high_risk_position content boolean
+  input has_registry_discrepancies content boolean
+  input has_logical_arithmetic_errors content boolean
+  output requires_automated_check content boolean
+  output requires_full_check content boolean
+
+scope RiskAssessment:
+  # Section III §2: automated check for declarations with no findings
+  definition requires_automated_check equals
+    if not has_registry_discrepancies
+       and not has_logical_arithmetic_errors
+    then true
+    else false
+
+  # Section V §1: full check triggered by:
+  # (1) high-risk position, (2) discrepancies found, (3) external information
+  definition requires_full_check equals
+    if is_high_risk_position
+       or has_registry_discrepancies
+       or has_logical_arithmetic_errors
+    then true
+    else false
+```
+
+## Section IV. Automated Verification Deadlines
+
+> Article IV §2: automated check must be completed within 15 days
+
+```catala
+declaration scope AutomatedCheckDeadlines:
+  input selection_date content date
+  output check_start_date content date
+  output check_deadline content date
+  output notification_deadline content date
+
+scope AutomatedCheckDeadlines:
+  # next working day after selection
+  definition check_start_date equals
+    selection_date +@ 1 day
+
+  # 15 calendar days from start
+  definition check_deadline equals
+    check_start_date +@ 15 day
+
+  # notification to declarant within 10 days of report formation
+  definition notification_deadline equals
+    check_deadline +@ 10 day
+```
+
+## Section V. Full Verification Deadlines
+
+> Article V §17: full verification must be completed within 120 days;
+> may be extended by up to 60 additional days
+
+```catala
+declaration scope FullVerificationDeadlines:
+  input assignment_date content date
+  input extension_days content integer
+  # 0..60 additional days approved by deputy head
+  input is_suspended content boolean
+  input suspension_days content integer
+  output start_date content date
+  output base_deadline content date
+  output extended_deadline content date
+  output declarant_request_latest content date
+  output declarant_response_deadline_days content integer
+  output report_draft_deadline_days content integer
+
+scope FullVerificationDeadlines:
+  # next working day after assignment
+  definition start_date equals
+    assignment_date +@ 1 day
+
+  # base: 120 days from start
+  definition base_deadline equals
+    start_date +@ 120 day
+
+  # extended: up to 60 more days (total max 180)
+  definition extended_deadline equals
+    start_date +@ (120 + extension_days) day
+
+  # request to declarant must be sent no later than 15 working days
+  # before end of verification period (Section V §16)
+  definition declarant_request_latest equals
+    extended_deadline +@ -15 day
+
+  # declarant has 10 working days to respond (Section V §16)
+  definition declarant_response_deadline_days equals 10
+
+  # draft report within 10 working days after end of verification (Section VI §1)
+  definition report_draft_deadline_days equals 10
+```
+
+## Section V §15. Illegal Enrichment / Unjustified Assets Detection
+
+> Compare total asset value acquired during service period
+> against total declared lawful income of declarant and family members
+
+```catala
+declaration scope IllegalEnrichmentCheck:
+  input total_assets_value content money
+  input total_lawful_income content money
+  input illegal_enrichment_threshold content money
+  # 500 subsistence minimums per Criminal Code Art.368-2
+  output enrichment_gap content money
+  output has_illegal_enrichment_signs content boolean
+  output has_unjustified_asset_signs content boolean
+
+scope IllegalEnrichmentCheck:
+  definition enrichment_gap equals
+    total_assets_value - total_lawful_income
+
+  # Criminal Code Art.368-2: gap > 500 subsistence minimums = illegal enrichment
+  definition has_illegal_enrichment_signs equals
+    if enrichment_gap > illegal_enrichment_threshold
+    then true
+    else false
+
+  # Below criminal threshold but gap still positive = unjustified assets
+  definition has_unjustified_asset_signs equals
+    if enrichment_gap > $0
+       and not has_illegal_enrichment_signs
+    then true
+    else false
+```
+
+## Section V §14. Conflict of Interest / Gift and Second Job Checks
+
+> Refers to Law Art.23 (gift limits) and Art.25 (second job prohibition)
+
+```catala
+declaration scope ConflictOfInterestCheck:
+  input gift_amount content money
+  input gift_cap_single content money
+  # 2 × subsistence minimum
+  input gift_cap_annual content money
+  # 4 × subsistence minimum (from same source)
+  input has_second_job content boolean
+  input second_job_is_exempt content boolean
+  # exempt: scientific, teaching, creative
+  output gift_violation content boolean
+  output second_job_violation content boolean
+
+scope ConflictOfInterestCheck:
+  definition gift_violation equals
+    if gift_amount > gift_cap_single
+    then true
+    else false
+
+  definition second_job_violation equals
+    if has_second_job and not second_job_is_exempt
+    then true
+    else false
+```
+
+## Section VI. Verification Outcome Classification
+
+> Determines what follow-up action is required based on findings
+
+```catala
+declaration scope VerificationOutcome:
+  input findings content list of VerificationFinding
+  input declarant_explained content boolean
+  input explanation_refutes_findings content boolean
+  output result content VerificationResult
+  output requires_admin_protocol content boolean
+  output requires_criminal_referral content boolean
+  output requires_unjustified_assets_referral content boolean
+  output notification_to_employer content boolean
+
+scope VerificationOutcome:
+  definition result equals
+    if (list_length of findings) = 0 then
+      VerificationResult.Clean
+    else if
+      exists f in findings such that
+        f.finding_type = FindingType.UnjustifiedAssetSigns
+      and not declarant_explained
+    then VerificationResult.UnjustifiedAssets
+    else if
+      exists f in findings such that
+        f.finding_type = FindingType.FalseData
+    then VerificationResult.FalseDataFound
+    else if
+      exists f in findings such that
+        f.finding_type = FindingType.IllegalEnrichmentSigns
+    then VerificationResult.CriminalOffense
+    else if
+      exists f in findings such that
+        (f.finding_type = FindingType.GiftLimitViolation or
+         f.finding_type = FindingType.SecondJobViolation or
+         f.finding_type = FindingType.ConflictOfInterest)
+    then VerificationResult.AdministrativeOffense
+    else if
+      exists f in findings such that
+        f.finding_type = FindingType.InaccurateData
+    then VerificationResult.InaccurateDataFound
+    else VerificationResult.Clean
+
+  # Section VI §5: admin protocol if admin offense found
+  definition requires_admin_protocol equals
+    result = VerificationResult.AdministrativeOffense
+
+  # Section VI §6: criminal referral to NABU/SAP if criminal offense
+  definition requires_criminal_referral equals
+    result = VerificationResult.CriminalOffense
+
+  # Section VI §8: unjustified assets referral to SAP/OGP
+  definition requires_unjustified_assets_referral equals
+    if result = VerificationResult.UnjustifiedAssets
+       and (not declarant_explained or not explanation_refutes_findings)
+    then true
+    else false
+
+  # Section VI §9: notify employer if false data found
+  definition notification_to_employer equals
+    result = VerificationResult.FalseDataFound
+```
+
+## Section VI. Post-Verification Deadlines
+
+> Deadlines for follow-up actions after report is approved
+
+```catala
+declaration scope PostVerificationDeadlines:
+  input report_approval_date content date
+  output admin_protocol_start content date
+  output criminal_referral_deadline content date
+  output unjustified_assets_request_deadline content date
+  output declarant_unjustified_response_deadline_days content integer
+  output sap_referral_deadline_days content integer
+  output publication_deadline content date
+
+scope PostVerificationDeadlines:
+  # Section VI §5,6,7,8: all follow-up actions within 5 working days
+  definition admin_protocol_start equals
+    report_approval_date +@ 5 day
+
+  definition criminal_referral_deadline equals
+    report_approval_date +@ 5 day
+
+  definition unjustified_assets_request_deadline equals
+    report_approval_date +@ 5 day
+
+  # Section VI §8: declarant has 10 working days to explain unjustified assets
+  definition declarant_unjustified_response_deadline_days equals 10
+
+  # Section VI §8: SAP referral within 10 working days after response deadline
+  definition sap_referral_deadline_days equals 10
+
+  # Section VI §10: publication within 10 working days of approval
+  definition publication_deadline equals
+    report_approval_date +@ 10 day
+```
+
+## Section V §17. Military Service Suspension Rule
+
+> Verification period is suspended while declarant is on military service
+> Exception: does NOT suspend for persons listed in Art.45 §7 p.1-3
+> (top officials: President, PM, ministers, MPs, judges)
+
+```catala
+declaration scope MilitarySuspension:
+  input is_on_military_service content boolean
+  input is_top_official content boolean
+  # Art.45 §7 p.1-3: President, PM, ministers, MPs, judges, prosecutors
+  input martial_law_active content boolean
+  output suspension_applies content boolean
+  output resumes_after_martial_law content boolean
+
+scope MilitarySuspension:
+  definition suspension_applies equals
+    if is_on_military_service and not is_top_official
+    then true
+    else false
+
+  # If martial law ends, suspension ends next day regardless
+  definition resumes_after_martial_law equals
+    if martial_law_active
+    then false
+    else true
+```
+
+## Section V §17. Statute of Limitations Check
+
+> If limitations period has expired OR 3 years since leaving office —
+> verification must be terminated without approving results
+
+```catala
+declaration scope LimitationsCheck:
+  input verification_start_date content date
+  input left_office_date content date
+  input current_date content date
+  input limitations_expired content boolean
+  output years_since_left_office content decimal
+  output must_terminate content boolean
+
+scope LimitationsCheck:
+  definition years_since_left_office equals
+    decimal of
+      ((current_date -@ left_office_date) / 365)
+
+  definition must_terminate equals
+    if limitations_expired
+    then true
+    else if years_since_left_office > 3.0
+    then true
+    else false
+```
+
+## Tests
+
+```catala
+declaration scope TestFalseDataThreshold:
+  output result content money
+
+scope TestFalseDataThreshold:
+  definition result equals
+    let t scope FalseDataThreshold in
+    let _ = t.subsistence_minimum := $3028.00 in
+    t.threshold
+    # Expected: $454,200.00 (150 × 3028)
+
+test TestFalseDataThreshold:
+  definition result equals $454200.00
+```
+
+```catala
+declaration scope TestRiskAssessmentHighRisk:
+  output result content boolean
+
+scope TestRiskAssessmentHighRisk:
+  definition result equals
+    let r scope RiskAssessment in
+    let _ = r.risk_score := 0.0 in
+    let _ = r.is_high_risk_position := true in
+    let _ = r.has_registry_discrepancies := false in
+    let _ = r.has_logical_arithmetic_errors := false in
+    r.requires_full_check
+    # High-risk position always triggers full check
+
+test TestRiskAssessmentHighRisk:
+  definition result equals true
+```
+
+```catala
+declaration scope TestIllegalEnrichmentAboveThreshold:
+  output result content boolean
+
+scope TestIllegalEnrichmentAboveThreshold:
+  definition result equals
+    let c scope IllegalEnrichmentCheck in
+    let _ = c.total_assets_value := $3000000.00 in
+    let _ = c.total_lawful_income := $500000.00 in
+    let _ = c.illegal_enrichment_threshold := $1514000.00 in
+    # 500 × 3028
+    c.has_illegal_enrichment_signs
+    # gap = 2,500,000 > 1,514,000 → criminal offense
+
+test TestIllegalEnrichmentAboveThreshold:
+  definition result equals true
+```
+
+```catala
+declaration scope TestIllegalEnrichmentBelowThreshold:
+  output result content boolean
+
+scope TestIllegalEnrichmentBelowThreshold:
+  definition result equals
+    let c scope IllegalEnrichmentCheck in
+    let _ = c.total_assets_value := $600000.00 in
+    let _ = c.total_lawful_income := $500000.00 in
+    let _ = c.illegal_enrichment_threshold := $1514000.00 in
+    c.has_unjustified_asset_signs
+    # gap = 100,000 < threshold → unjustified assets (civil, not criminal)
+
+test TestIllegalEnrichmentBelowThreshold:
+  definition result equals true
+```
+
+```catala
+declaration scope TestGiftViolation:
+  output result content boolean
+
+scope TestGiftViolation:
+  definition result equals
+    let c scope ConflictOfInterestCheck in
+    let _ = c.gift_amount := $55000.00 in
+    let _ = c.gift_cap_single := $6056.00 in
+    let _ = c.gift_cap_annual := $12112.00 in
+    let _ = c.has_second_job := false in
+    let _ = c.second_job_is_exempt := false in
+    c.gift_violation
+
+test TestGiftViolation:
+  definition result equals true
+```
+
+```catala
+declaration scope TestFullVerificationDeadline:
+  output result content date
+
+scope TestFullVerificationDeadline:
+  definition result equals
+    let d scope FullVerificationDeadlines in
+    let _ = d.assignment_date := |2026-01-01| in
+    let _ = d.extension_days := 0 in
+    let _ = d.is_suspended := false in
+    let _ = d.suspension_days := 0 in
+    d.base_deadline
+    # start = 2026-01-02, deadline = 2026-05-02 (120 days)
+
+test TestFullVerificationDeadline:
+  definition result equals |2026-05-02|
+```
+
+```catala
+declaration scope TestMilitarySuspensionTopOfficial:
+  output result content boolean
+
+scope TestMilitarySuspensionTopOfficial:
+  definition result equals
+    let m scope MilitarySuspension in
+    let _ = m.is_on_military_service := true in
+    let _ = m.is_top_official := true in
+    let _ = m.martial_law_active := true in
+    m.suspension_applies
+    # Top officials: suspension does NOT apply
+
+test TestMilitarySuspensionTopOfficial:
+  definition result equals false
+```
+
+```catala
+declaration scope TestLimitationsExpired:
+  output result content boolean
+
+scope TestLimitationsExpired:
+  definition result equals
+    let l scope LimitationsCheck in
+    let _ = l.verification_start_date := |2026-01-01| in
+    let _ = l.left_office_date := |2022-01-01| in
+    let _ = l.current_date := |2026-01-01| in
+    let _ = l.limitations_expired := false in
+    l.must_terminate
+    # 4 years since left office > 3 years → terminate
+
+test TestLimitationsExpired:
+  definition result equals true
+```

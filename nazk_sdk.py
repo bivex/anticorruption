@@ -252,6 +252,32 @@ class BankAccount:
 
 
 @dataclass
+class SecurityItem:
+    issuer: str
+    security_type: str   # "Акції", "Облігації", etc.
+    quantity: Decimal | None
+    nominal_uah: Decimal | None
+    owner: str
+
+
+@dataclass
+class DepositItem:
+    bank_name: str
+    bank_edrpou: str | None
+    currency: str
+    amount: Decimal
+    owner: str
+
+
+@dataclass
+class TransactionItem:
+    transaction_type: str   # "Найм (оренда)", "Купівля-продаж", etc.
+    subject: str            # "Транспортний засіб", "Нерухоме майно", etc.
+    date: str
+    cost_uah: Decimal | None
+
+
+@dataclass
 class FamilyMember:
     member_id: str         # matches person_who_care / rightBelongs
     firstname: str
@@ -278,6 +304,11 @@ class ParsedDeclaration:
     properties: list[PropertyItem] = field(default_factory=list)
     vehicles: list[VehicleItem] = field(default_factory=list)
     bank_accounts: list[BankAccount] = field(default_factory=list)
+    securities: list[SecurityItem] = field(default_factory=list)
+    deposits: list[DepositItem] = field(default_factory=list)
+    transactions: list[TransactionItem] = field(default_factory=list)
+    work_place_edrpou: str = ""
+    registration_region: str = ""
     raw: dict = field(default_factory=dict, repr=False)
 
 
@@ -566,6 +597,84 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
                 owner=owner,
             ))
 
+    # ------------------------------------------------------------------
+    # step_1 extras — workplace EDRPOU, registration region
+    # ------------------------------------------------------------------
+    work_place_edrpou = str(s1.get("workPlaceEdrpou", "") or "")
+    registration_region = str(s1.get("region", "") or "")
+
+    # ------------------------------------------------------------------
+    # step_4 — securities (list)
+    # ------------------------------------------------------------------
+    securities: list[SecurityItem] = []
+    for entry in step_list(4):
+        if not isinstance(entry, dict):
+            continue
+        rights = entry.get("rights", [])
+        owner, _ = resolve_rights(rights)
+        qty_raw = entry.get("quantity") or entry.get("quantityAcquired")
+        nom_raw = entry.get("cost") or entry.get("nominal")
+        securities.append(SecurityItem(
+            issuer=str(entry.get("issuer_ua_company_name") or entry.get("issuer_eng_company_name", "")),
+            security_type=str(entry.get("objectType", "")),
+            quantity=_parse_money(qty_raw) if qty_raw else None,
+            nominal_uah=_parse_money(nom_raw) if nom_raw else None,
+            owner=owner,
+        ))
+
+    # ------------------------------------------------------------------
+    # step_12 — cash AND deposits/other financial assets
+    # ------------------------------------------------------------------
+    deposits: list[DepositItem] = []
+    for entry in step_list(12):
+        if not isinstance(entry, dict):
+            continue
+        obj_type = str(entry.get("objectType", "")).lower()
+        amount = _parse_money(entry.get("sizeAssets") or entry.get("amount"))
+        currency_raw = str(entry.get("assetsCurrency", "UAH")).upper()
+        currency = currency_raw.split("(")[0].strip()
+
+        if "готівков" in obj_type or "cash" in obj_type:
+            # already handled above
+            pass
+        else:
+            # deposits, savings accounts, other monetary assets
+            rights = entry.get("rights", [])
+            owner, _ = resolve_rights(rights)
+            org = entry.get("organization", "") or ""
+            org_code = entry.get("organization_code") or entry.get("organization_edrpou")
+            deposits.append(DepositItem(
+                bank_name=str(org),
+                bank_edrpou=str(org_code) if org_code else None,
+                currency=currency,
+                amount=amount,
+                owner=owner,
+            ))
+
+    # ------------------------------------------------------------------
+    # step_14 — significant transactions (list)
+    # ------------------------------------------------------------------
+    transactions: list[TransactionItem] = []
+    for entry in step_list(14):
+        if not isinstance(entry, dict):
+            continue
+        # cost may be nested in expenses dict
+        cost = None
+        expenses = entry.get("expenses", {})
+        if isinstance(expenses, dict):
+            for exp in expenses.values():
+                if isinstance(exp, dict):
+                    c = exp.get("costAmount")
+                    if c and str(c) not in ("[Не застосовується]", ""):
+                        cost = _parse_money(c)
+                        break
+        transactions.append(TransactionItem(
+            transaction_type=str(entry.get("specExpenses", "") or entry.get("transactionType", "")),
+            subject=str(entry.get("specExpensesSubject", "") or entry.get("objectType", "")),
+            date=str(entry.get("transactionDate", "")),
+            cost_uah=cost,
+        ))
+
     return ParsedDeclaration(
         document_id=str(raw.get("id") or data.get("id") or ""),
         declarant_name=declarant_name,
@@ -573,6 +682,8 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
         declaration_year=declaration_year,
         submitted_date=submitted_date,
         work_place=work_place,
+        work_place_edrpou=work_place_edrpou,
+        registration_region=registration_region,
         position=position,
         incomes=incomes,
         cash_usd=cash_usd,
@@ -584,6 +695,9 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
         properties=properties,
         vehicles=vehicles,
         bank_accounts=bank_accounts,
+        securities=securities,
+        deposits=deposits,
+        transactions=transactions,
         raw=raw,
     )
 

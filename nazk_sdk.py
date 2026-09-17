@@ -73,13 +73,286 @@ SUBSISTENCE_MINIMUM: dict[int, int] = {
 }
 
 # ---------------------------------------------------------------------------
-# API client
 # ---------------------------------------------------------------------------
+# Constants & Error codes & Countries Map
+# ---------------------------------------------------------------------------
+
+NAZK_ERROR_CODES: dict[int, str] = {
+    1310002: "Документ не знайдено (неіснуючий ідентифікатор)",
+    404: "Сторінку не знайдено",
+    1310101: "Пошуковий запит (query) має бути від 3 до 255 символів",
+    1310111: "Некоректний ID суб'єкта декларування (user_declarant_id)",
+    1310112: "Некоректний ID суб'єкта декларування (user_declarant_id)",
+    1310121: "Некоректний тип документа (document_type, має бути від 1 до 3)",
+    1310122: "Некоректний тип документа (document_type, має бути від 1 до 3)",
+    1310131: "Некоректний тип декларації (declaration_type, має бути від 1 до 4)",
+    1310132: "Некоректний тип декларації (declaration_type, має бути від 1 до 4)",
+    1310141: "Некоректний рік декларації (declaration_year, має бути від 2015 до поточної дати)",
+    1310142: "Некоректний рік декларації (declaration_year, має бути від 2015 до поточної дати)",
+    1310151: "Некоректна дата початку подання (start_date, UNIX timestamp)",
+    1310152: "Некоректна дата початку подання (start_date, UNIX timestamp)",
+    1310161: "Некоректна дата кінця подання (end_date, UNIX timestamp)",
+    1310162: "Некоректна дата кінця подання (end_date, UNIX timestamp)",
+    1310171: "Некоректний номер сторінки (page, має бути від 1 до 100)",
+    1310172: "Некоректний номер сторінки (page, має бути від 1 до 100)",
+}
+
+COUNTRIES_MAP: dict[str, str] = {
+    "1": "Україна",
+    "2": "Австралія",
+    "3": "Австрія",
+    "4": "Азербайджан",
+    "5": "Аландські острови",
+    "6": "Албанія",
+    "7": "Алжир",
+    "8": "Американське Самоа",
+    "9": "Американські Віргінські острови",
+    "10": "Ангілья",
+    "11": "Ангола",
+    "12": "Андорра",
+    "13": "Антарктида",
+    "14": "Антигуа і Барбуда",
+    "15": "Аргентина",
+    "16": "Аруба",
+    "17": "Афганістан",
+    "18": "Багамські Острови",
+    "19": "Бангладеш",
+    "20": "Барбадос",
+    "21": "Бахрейн",
+    "22": "Беліз",
+    "23": "Бельгія",
+    "24": "Бенін",
+    "25": "Бермудські острови",
+    "26": "Білорусь",
+    "27": "Болгарія",
+    "28": "Болівія",
+    "29": "Боснія і Герцеговина",
+    "30": "Ботсвана",
+    "31": "Бразилія",
+    "32": "Британська територія в Індійському океані",
+    "33": "Британські Віргінські острови",
+    "34": "Бруней",
+    "35": "Буркіна-Фасо",
+    "36": "Бурунді",
+    "37": "Бутан",
+    "38": "Вануату",
+    "39": "Ватикан",
+    "40": "Велика Британія",
+    "41": "Венесуела",
+    "42": "В'єтнам",
+    "43": "Вірменія",
+    "44": "Волліс і Футуна",
+    "45": "Габон",
+    "46": "Гаїті",
+    "47": "Гаяна",
+    "48": "Гамбія",
+    "49": "Гана",
+    "50": "Гваделупа",
+    "51": "Гватемала",
+    "52": "Гвінея",
+    "53": "Гвінея-Бісау",
+    "54": "Гернсі",
+    "55": "Гондурас",
+    "56": "Гонконг",
+    "57": "Гренада",
+    "58": "Греція",
+    "59": "Грузія",
+    "60": "Гуам",
+    "61": "Гібралтар",
+    "62": "Ґренландія",
+    "63": "Данія",
+    "64": "ДР Конго",
+    "65": "Джерсі",
+    "66": "Джибуті",
+    "67": "Домініка",
+    "68": "Домініканська Республіка",
+    "69": "Зовнішні малі острови США",
+    "70": "Еквадор",
+    "71": "Екваторіальна Гвінея",
+    "72": "Еритрея",
+    "73": "Естонія",
+    "74": "Ефіопія",
+    "75": "Єгипет",
+    "76": "Ємен",
+    "77": "Замбія",
+    "78": "Західна Сахара",
+    "79": "Зімбабве",
+    "80": "Ізраїль",
+    "81": "Індія",
+    "82": "Індонезія",
+    "83": "Ірак",
+    "84": "Іран",
+    "85": "Ірландія",
+    "86": "Ісландія",
+    "87": "Іспанія",
+    "88": "Італія",
+    "89": "Йорданія",
+    "90": "Кабо-Верде",
+    "91": "Казахстан",
+    "92": "Кайманові острови",
+    "93": "Камбоджа",
+    "94": "Камерун",
+    "95": "Канада",
+    "96": "Катар",
+    "97": "Кенія",
+    "98": "Киргизстан",
+    "99": "КНР",
+    "100": "Північна Корея",
+    "101": "Кіпр",
+    "102": "Кірибаті",
+    "103": "Кокосові острови (Кілінг)",
+    "104": "Колумбія",
+    "105": "Коморські Острови",
+    "106": "Конго",
+    "107": "Коста-Рика",
+    "108": "Кот-д'Івуар",
+    "109": "Куба",
+    "110": "Кувейт",
+    "111": "Лаос",
+    "112": "Латвія",
+    "113": "Лесото",
+    "114": "Литва",
+    "115": "Ліберія",
+    "116": "Ліван",
+    "117": "Лівія",
+    "118": "Ліхтенштейн",
+    "119": "Люксембург",
+    "120": "Маврикій",
+    "121": "Мавританія",
+    "122": "Мадагаскар",
+    "123": "Майотта",
+    "124": "Макао",
+    "125": "Македонія",
+    "126": "Малаві",
+    "127": "Малайзія",
+    "128": "Малі",
+    "129": "Мальдіви",
+    "130": "Мальта",
+    "131": "Марокко",
+    "132": "Мартиніка",
+    "133": "Маршаллові Острови",
+    "134": "Мексика",
+    "135": "Мозамбік",
+    "136": "Молдова",
+    "137": "Монако",
+    "138": "Монголія",
+    "139": "Монтсеррат",
+    "140": "М'янма",
+    "141": "Намібія",
+    "142": "Науру",
+    "143": "Непал",
+    "144": "Нігер",
+    "145": "Нігерія",
+    "146": "Нідерланди",
+    "147": "Нідерландські Антильські острови",
+    "148": "Нікарагуа",
+    "149": "Німеччина",
+    "150": "Ніуе",
+    "151": "Нова Зеландія",
+    "152": "Нова Каледонія",
+    "153": "Норвегія",
+    "154": "ОАЕ",
+    "155": "Оман",
+    "156": "Острів Буве",
+    "157": "Острів Мен",
+    "158": "Острів Норфолк",
+    "159": "Острів Різдва",
+    "160": "Острови Святої Єлени, Вознесіння і Тристан-да-Кунья",
+    "161": "Острови Герд і Макдональд",
+    "162": "Острови Кука",
+    "163": "Пакистан",
+    "164": "Палау",
+    "165": "Палестина",
+    "166": "Панама",
+    "167": "Папуа - Нова Гвінея",
+    "168": "Парагвай",
+    "169": "Перу",
+    "170": "Південна Джорджія та Південні Сандвічеві острови",
+    "171": "Південна Корея",
+    "172": "Південний Судан",
+    "173": "ПАР",
+    "174": "Північні Маріанські острови",
+    "175": "Піткерн",
+    "176": "Польща",
+    "177": "Португалія",
+    "178": "Пуерто-Рико",
+    "179": "Реюньйон",
+    "180": "Росія",
+    "181": "Руанда",
+    "182": "Румунія",
+    "183": "Сальвадор",
+    "184": "Самоа",
+    "185": "Сан-Марино",
+    "186": "Сан-Томе і Принсіпі",
+    "187": "Саудівська Аравія",
+    "188": "Свазіленд",
+    "189": "Свальбард і Ян-Маєн",
+    "190": "Сейшельські Острови",
+    "191": "Сен-Бартельмі",
+    "192": "Сенегал",
+    "193": "Сен-Мартін",
+    "194": "Сен-П'єр і Мікелон",
+    "195": "Сент-Вінсент і Гренадини",
+    "196": "Сент-Кіттс і Невіс",
+    "197": "Сент-Люсія",
+    "198": "Сербія",
+    "199": "Сирія",
+    "200": "Сінгапур",
+    "201": "Словаччина",
+    "202": "Словенія",
+    "203": "Соломонові Острови",
+    "204": "Сомалі",
+    "205": "США",
+    "206": "Судан",
+    "207": "Суринам",
+    "208": "Східний Тимор",
+    "209": "Сьєрра-Леоне",
+    "210": "Таджикистан",
+    "211": "Таїланд",
+    "212": "Тайвань",
+    "213": "Танзанія",
+    "214": "Острови Теркс і Кайкос",
+    "215": "Того",
+    "216": "Токелау",
+    "217": "Тонга",
+    "218": "Тринідад і Тобаго",
+    "219": "Тувалу",
+    "220": "Туніс",
+    "221": "Туреччина",
+    "222": "Туркменістан",
+    "223": "Уганда",
+    "224": "Угорщина",
+    "225": "Узбекистан",
+    "227": "Уругвай",
+    "228": "Фарерські острови",
+    "229": "Федеративні Штати Мікронезії",
+    "230": "Фіджі",
+    "231": "Філіппіни",
+    "232": "Фінляндія",
+    "233": "Фолклендські (Мальвінські) острови",
+    "234": "Франція",
+    "235": "Французька Гвіана",
+    "236": "Французька Полінезія",
+    "237": "Французькі Південні території",
+    "238": "Хорватія",
+    "239": "Центральноафриканська Республіка",
+    "240": "Чад",
+    "241": "Чехія",
+    "242": "Чилі",
+    "243": "Чорногорія",
+    "244": "Швейцарія",
+    "245": "Швеція",
+    "246": "Шрі-Ланка",
+    "247": "Ямайка",
+    "248": "Японія",
+}
+
 
 class NazkError(Exception):
     """Raised when the API returns an error code."""
     def __init__(self, code: int, url: str):
-        super().__init__(f"NAZK API error {code} for {url}")
+        desc = NAZK_ERROR_CODES.get(code, "Невідома помилка API")
+        super().__init__(f"NAZK API error {code} ({desc}) for {url}")
         self.code = code
 
 
@@ -101,6 +374,7 @@ class NazkClient:
             "Referer": "https://nazk.gov.ua/",
             "Origin": "https://nazk.gov.ua",
         })
+        self._countries_cache: dict[str, str] | None = None
 
     # ------------------------------------------------------------------
     # Core requests
@@ -141,49 +415,95 @@ class NazkClient:
         region_path: str | None = None,
         district_path: str | None = None,
         community_path: str | None = None,
+        city_path: str | None = None,
         actual_region_path: str | None = None,
         actual_district_path: str | None = None,
         actual_community_path: str | None = None,
+        actual_city_path: str | None = None,
     ) -> dict:
         """
-        Search / filter declarations.
+        Search / filter declarations with client-side validation.
         Returns raw API response with 'data' list and pagination info.
         """
         params: dict[str, Any] = {}
+        
         if query is not None:
+            if not isinstance(query, str) or not (3 <= len(query) <= 255):
+                raise ValueError("query (пошуковий запит) має бути текстовим полем від 3 до 255 символів")
             params["query"] = query
+            
         if full_search:
             params["full_search"] = 1
+            
         if user_declarant_id is not None:
+            if not isinstance(user_declarant_id, int) or not (1 <= user_declarant_id <= 10000000):
+                raise ValueError("user_declarant_id (ID суб’єкта) має бути числом від 1 до 10000000")
             params["user_declarant_id"] = user_declarant_id
+            
         if document_type is not None:
+            if not isinstance(document_type, int) or not (1 <= document_type <= 3):
+                raise ValueError("document_type (тип документа) має бути числом від 1 до 3")
             params["document_type"] = document_type
+            
         if declaration_type is not None:
+            if not isinstance(declaration_type, int) or not (1 <= declaration_type <= 4):
+                raise ValueError("declaration_type (тип декларації) має бути числом від 1 до 4")
             params["declaration_type"] = declaration_type
+            
         if declaration_year is not None:
+            current_year = datetime.date.today().year
+            if not isinstance(declaration_year, int) or not (2015 <= declaration_year <= current_year):
+                raise ValueError(f"declaration_year (рік декларації) має бути числом від 2015 до {current_year}")
             params["declaration_year"] = declaration_year
+            
         if start_date is not None:
+            current_time = int(time.time())
+            if not isinstance(start_date, int) or not (1470009600 <= start_date <= current_time):
+                raise ValueError("start_date (початок дати подання) має бути UNIX-timestamp від 1470009600 (01.08.2016) до поточної дати")
             params["start_date"] = start_date
+            
         if end_date is not None:
+            current_time = int(time.time())
+            if not isinstance(end_date, int) or not (1470009600 <= end_date <= current_time):
+                raise ValueError("end_date (кінець дати подання) має бути UNIX-timestamp від 1470009600 (01.08.2016) до поточної дати")
             params["end_date"] = end_date
-        if page != 1:
-            params["page"] = page
+            
+        if page is not None:
+            if not isinstance(page, int) or not (1 <= page <= 100):
+                raise ValueError("page (№ сторінки) має бути числом від 1 до 100")
+            if page != 1:
+                params["page"] = page
+            
         if work_place_edrpou is not None:
-            params["workPlaceEdrpou"] = work_place_edrpou
+            if isinstance(work_place_edrpou, int):
+                wp_edrpou_str = f"{work_place_edrpou:08d}"
+            else:
+                wp_edrpou_str = str(work_place_edrpou).strip()
+            if not wp_edrpou_str.isdigit() or len(wp_edrpou_str) != 8:
+                raise ValueError("work_place_edrpou (ЄДРПОУ) має бути числовим кодом довжиною 8 символів")
+            params["workPlaceEdrpou"] = wp_edrpou_str
+            
         if work_place is not None:
-            params["workPlace"] = work_place
+            params["workPlace"] = str(work_place)
+            
         if region_path is not None:
             params["regionPath"] = region_path
         if district_path is not None:
             params["districtPath"] = district_path
         if community_path is not None:
             params["communityPath"] = community_path
+        if city_path is not None:
+            params["cityPath"] = city_path
+            
         if actual_region_path is not None:
             params["actual_regionPath"] = actual_region_path
         if actual_district_path is not None:
             params["actual_districtPath"] = actual_district_path
         if actual_community_path is not None:
             params["actual_communityPath"] = actual_community_path
+        if actual_city_path is not None:
+            params["actual_cityPath"] = actual_city_path
+            
         return self._get("/documents/list", params)
 
     def iter_documents(self, **kwargs) -> Any:
@@ -204,9 +524,11 @@ class NazkClient:
     # Countries reference
     # ------------------------------------------------------------------
 
-    def get_countries(self) -> list[dict]:
+    def get_countries(self) -> dict[str, str]:
         """Fetch the countries reference list."""
-        return self._get("/countries/list")
+        if self._countries_cache is None:
+            self._countries_cache = self._get("/countries/list")
+        return self._countries_cache
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +631,11 @@ class ParsedDeclaration:
     transactions: list[TransactionItem] = field(default_factory=list)
     work_place_edrpou: str = ""
     registration_region: str = ""
+    responsible_position: int | None = None
+    post_type: int | None = None
+    post_category: int | None = None
+    corruption_affected: int | None = None
+    schema_version: int | None = None
     raw: dict = field(default_factory=dict, repr=False)
 
 
@@ -346,14 +673,14 @@ def _parse_money(value: Any) -> Decimal:
         return Decimal("0")
 
 
-def parse_declaration(raw: dict) -> ParsedDeclaration:
+def parse_declaration(raw: dict, countries_map: dict[str, str] | None = None) -> ParsedDeclaration:
     """
     Convert a raw NAZK API document dict into a ParsedDeclaration.
     Handles both shallow (list API) and full (get_document) responses.
     """
     data = raw.get("data", raw)
 
-    # Top-level fields present in list API response
+    # Top-level fields present in list API response or full document
     declaration_year_top = raw.get("declaration_year")
     declaration_type_top = raw.get("declaration_type")
     date_top = raw.get("date") or raw.get("lastmodified_date")
@@ -430,6 +757,21 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
     work_place = wp_raw.get("value", "") if isinstance(wp_raw, dict) else str(wp_raw or "")
     position = s1.get("workPost", "")
 
+    # Duplicate top-level fields / step 2.1 properties
+    def _parse_int(val: Any) -> int | None:
+        if val is None or str(val) in ("", "[Не застосовується]", "null"):
+            return None
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return None
+
+    responsible_position = _parse_int(raw.get("responsible_position") or s1.get("responsiblePosition"))
+    post_type = _parse_int(raw.get("post_type") or s1.get("postType"))
+    post_category = _parse_int(raw.get("post_category") or s1.get("postCategory"))
+    corruption_affected = _parse_int(raw.get("corruption_affected") or s1.get("corruptionAffected"))
+    schema_version = _parse_int(raw.get("schema_version"))
+
     # ------------------------------------------------------------------
     # step_2 — family members (list of person objects)
     # ------------------------------------------------------------------
@@ -481,15 +823,18 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
 
         source_name = (
             src.get("source_ua_company_name")
+            or entry.get("source_ua_company_name")
             or " ".join(filter(None, [
-                src.get("source_ua_lastname", ""),
-                src.get("source_ua_firstname", ""),
-                src.get("source_ua_middlename", ""),
+                src.get("source_ua_lastname") or entry.get("source_ua_lastname", ""),
+                src.get("source_ua_firstname") or entry.get("source_ua_firstname", ""),
+                src.get("source_ua_middlename") or entry.get("source_ua_middlename", ""),
             ])).strip()
-            or src.get("source_citizen", "unknown")
+            or src.get("source_citizen")
+            or entry.get("source_citizen")
+            or "unknown"
         )
-        source_edrpou = src.get("source_ua_company_code")
-        source_type = src.get("source_citizen", "unknown")
+        source_edrpou = src.get("source_ua_company_code") or entry.get("source_ua_company_code")
+        source_type = src.get("source_citizen") or entry.get("source_citizen") or "unknown"
 
         income_type = _normalize_income_type(str(entry.get("objectType", "")))
         amount = _parse_money(entry.get("sizeIncome") or entry.get("amount"))
@@ -538,16 +883,21 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
     # step_3 — real estate (list)
     # ------------------------------------------------------------------
     properties: list[PropertyItem] = []
+    cmap = countries_map or COUNTRIES_MAP
     for entry in step_list(3):
         if not isinstance(entry, dict):
             continue
         rights = entry.get("rights", [])
         owner, ownership_type = resolve_rights(rights)
         area_raw = entry.get("totalArea") or entry.get("livingArea")
+        
+        country_id = str(entry.get("country", ""))
+        country_name = cmap.get(country_id, country_id)
+        
         properties.append(PropertyItem(
             object_type=entry.get("objectType", ""),
             area=_parse_money(area_raw) if area_raw else None,
-            country=str(entry.get("country", "")),
+            country=country_name,
             city=str(entry.get("city", "")),
             owner=owner,
             ownership_type=ownership_type,
@@ -698,6 +1048,11 @@ def parse_declaration(raw: dict) -> ParsedDeclaration:
         securities=securities,
         deposits=deposits,
         transactions=transactions,
+        responsible_position=responsible_position,
+        post_type=post_type,
+        post_category=post_category,
+        corruption_affected=corruption_affected,
+        schema_version=schema_version,
         raw=raw,
     )
 

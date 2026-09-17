@@ -133,12 +133,26 @@ def summary_table(rows: list[tuple[ParsedDeclaration, AnalysisResult]]) -> None:
             print(_flag(f"    {yr}  {i.source_name[:45]:45s}  {i.amount_uah:>10,.0f} грн  "
                         f"({over:.1f}× ліміту)  -> {i.recipient[:30]}"))
 
-    # Cash trend
-    cash_rows = [(d.declaration_year, d.cash_uah + d.cash_usd * 41 + d.cash_eur * 45,
+    # Cash & Deposits trend (total liquid financial assets)
+    def total_assets_val(d: ParsedDeclaration) -> Decimal:
+        val = d.cash_uah + d.cash_usd * Decimal("41") + d.cash_eur * Decimal("45")
+        for dep in d.deposits:
+            curr = dep.currency.upper()
+            if curr == "UAH":
+                val += dep.amount
+            elif curr == "USD":
+                val += dep.amount * Decimal("41")
+            elif curr == "EUR":
+                val += dep.amount * Decimal("45")
+            else:
+                val += dep.amount
+        return val
+
+    cash_rows = [(d.declaration_year, total_assets_val(d),
                   sum(i.amount_uah for i in d.incomes if i.income_type in ("salary","monetary_allowance")))
                  for d, _ in rows]
     if any(c > 0 for _, c, _ in cash_rows):
-        print(_warn(f"\n  Динаміка готівки:"))
+        print(_warn(f"\n  Динаміка фінансових активів (готівка + депозити):"))
         for yr, cash, sal in sorted(cash_rows, key=lambda x: x[0]):
             months = float(cash) / (float(sal) / 12) if sal > 0 else 0.0
             bar = "█" * min(int(months), 40)
@@ -173,13 +187,31 @@ def main() -> None:
 
     # ── mode: single UUID ──
     if args.id:
-        raw = client.get_document(args.id)
+        try:
+            raw = client.get_document(args.id)
+        except Exception as e:
+            print(_flag(f"Помилка завантаження документа: {e}"))
+            sys.exit(1)
+            
         if args.json:
             print(json.dumps(raw, ensure_ascii=False, indent=2))
             return
         decl = parse_declaration(raw)
         result = CatalaAnalyzer(decl).analyze()
         print(_hdr(f"\n{decl.declarant_name}  —  {decl.work_place}"))
+        print(_hdr(f"Посада: {decl.position}"))
+        
+        header_parts = []
+        if decl.responsible_position is not None:
+            header_parts.append(f"Код відп. посади: {decl.responsible_position}")
+        if decl.post_category is not None:
+            header_parts.append(f"Кат. посади: {decl.post_category}")
+        if decl.corruption_affected is not None:
+            corr_str = "Так" if decl.corruption_affected == 1 else "Ні" if decl.corruption_affected == 2 else str(decl.corruption_affected)
+            header_parts.append(f"Корупціогенність: {corr_str}")
+        if header_parts:
+            print(_hdr("  | ".join(header_parts)))
+            
         print(_hdr("─" * 100))
         report(decl, result, verbose=True, decl_type=raw.get("declaration_type", 1))
         summary_table([(decl, result)])
@@ -198,8 +230,15 @@ def main() -> None:
     if args.edrpou:
         kwargs["work_place_edrpou"] = args.edrpou
 
-    r = client.list_documents(**kwargs)
-    docs = r.get("data", [])[:args.limit]
+    try:
+        r = client.list_documents(**kwargs)
+        docs = r.get("data", [])[:args.limit]
+    except ValueError as ve:
+        print(_flag(f"Помилка валідації параметрів запиту: {ve}"))
+        return
+    except Exception as e:
+        print(_flag(f"Помилка пошуку API НАЗК: {e}"))
+        return
 
     if not docs:
         print(_warn("  Нічого не знайдено"))
@@ -208,7 +247,7 @@ def main() -> None:
     # deduplicate: by default keep latest annual (type=1) per year
     # with --all flag keep ALL declarations (all types, no dedup)
     if args.all:
-        sorted_docs = sorted(docs, key=lambda x: (x.get("declaration_year", 0), x.get("date", "")))
+        sorted_docs = sorted(docs, key=lambda x: (x.get("declaration_year", 0), x.get("date") or x.get("lastmodified_date", "")))
     else:
         seen: dict[int, dict] = {}
         for d in docs:
@@ -221,7 +260,7 @@ def main() -> None:
                 prev_type = prev.get("declaration_type", 99)
                 if dtype == 1 and prev_type != 1:
                     seen[yr] = d
-                elif dtype == prev_type and d.get("date", "") > prev.get("date", ""):
+                elif dtype == prev_type and (d.get("date") or d.get("lastmodified_date", "")) > (prev.get("date") or prev.get("lastmodified_date", "")):
                     seen[yr] = d
         sorted_docs = sorted(seen.values(), key=lambda x: x.get("declaration_year", 0))
 
@@ -233,8 +272,9 @@ def main() -> None:
             s1 = d.get("data", {}).get("step_1", {})
             s1 = s1.get("data", s1) if isinstance(s1, dict) else s1
             wp = s1.get("workPlace", "")[:50]
+            d_date = d.get("date") or d.get("lastmodified_date") or ""
             print(f"  {d.get('declaration_year',0):4d}  {d.get('declaration_type',0):4d}  "
-                  f"{d.get('date','')[:10]:10s}  {d.get('id',''):36s}  {wp}")
+                  f"{d_date[:10]:10s}  {d.get('id',''):36s}  {wp}")
         return
 
     # ── full analysis ──
@@ -253,6 +293,18 @@ def main() -> None:
                 name = decl.declarant_name
                 print(_hdr(f"\n{name}  —  {decl.work_place}"))
                 print(_hdr(f"ЄДРПОУ: {decl.work_place_edrpou}  Регіон: {decl.registration_region}"))
+                
+                header_parts = []
+                if decl.responsible_position is not None:
+                    header_parts.append(f"Код відп. посади: {decl.responsible_position}")
+                if decl.post_category is not None:
+                    header_parts.append(f"Кат. посади: {decl.post_category}")
+                if decl.corruption_affected is not None:
+                    corr_str = "Так" if decl.corruption_affected == 1 else "Ні" if decl.corruption_affected == 2 else str(decl.corruption_affected)
+                    header_parts.append(f"Корупціогенність: {corr_str}")
+                if header_parts:
+                    print(_hdr(f"Відомості: " + " | ".join(header_parts)))
+                
                 print(_hdr("─" * 100))
             report(decl, result, verbose=args.verbose, decl_type=d.get("declaration_type", 1))
             rows.append((decl, result))

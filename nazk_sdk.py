@@ -395,9 +395,194 @@ class NazkClient:
     # Documents
     # ------------------------------------------------------------------
 
+    def _fetch_document_html(self, document_id: str) -> dict:
+        """Fallback: fetch declaration HTML from public registry and convert to API structure."""
+        from bs4 import BeautifulSoup
+        import re
+        url = f"https://public.nazk.gov.ua/documents/{document_id}"
+        resp = self._session.get(url, timeout=self.timeout)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        def get_field_val(soup_node, label: str) -> str:
+            if not soup_node:
+                return ""
+            for span in soup_node.find_all("span", class_="info-title"):
+                if label.lower() in span.get_text().lower():
+                    v = span.find_next_sibling("span", class_="info-value")
+                    if v:
+                        return v.get_text(strip=True)
+            for div in soup_node.find_all("div", class_=re.compile(r"color-1")):
+                if label.lower() in div.get_text().lower():
+                    v = div.find_next_sibling("div", class_=re.compile(r"border-bottom"))
+                    if v:
+                        return v.get_text(strip=True)
+            return ""
+
+        # Step 0
+        s0_card = soup.find(id="step-data-0")
+        s0_text = s0_card.get_text(" ", strip=True) if s0_card else ""
+        decl_type = 1
+        if "При звільненні" in s0_text or "при звільненні" in s0_text:
+            decl_type = 3
+        elif "кандидат" in s0_text.lower():
+            decl_type = 2
+        elif "виправлена" in s0_text.lower():
+            decl_type = 4
+
+        year_m = re.search(r"\b(20\d{2})\b", s0_text)
+        year = int(year_m.group(1)) if year_m else 0
+
+        # Step 1
+        s1 = soup.find(id="step-data-1")
+        lastname = get_field_val(s1, "Прізвище")
+        firstname = get_field_val(s1, "Імʼя") or get_field_val(s1, "Ім’я") or get_field_val(s1, "Ім'я")
+        middlename = get_field_val(s1, "По батькові")
+        fullname = f"{lastname} {firstname} {middlename}".strip()
+        workplace = get_field_val(s1, "Найменування місця роботи")
+        post = get_field_val(s1, "Займана посада")
+        edrpou = get_field_val(s1, "Код в Єдиному державному реєстрі")
+        region = get_field_val(s1, "Автономна Республіка Крим/область/місто зі спеціальним статусом")
+        post_category = get_field_val(s1, "Категорія посади")
+        post_type = get_field_val(s1, "Тип посади")
+
+        # Step 11 (incomes)
+        incomes = {}
+        s11 = soup.find(id="step-data-11")
+        if s11:
+            trs = s11.find_all("tr")
+            for idx, tr in enumerate(trs[1:]):
+                tds = tr.find_all(["th", "td"])
+                if len(tds) < 4:
+                    continue
+                src_txt = tds[1].get_text("\n", strip=True)
+                inc_type = tds[2].get_text(strip=True)
+                amt = tds[3].get_text(strip=True).replace(" ", "").replace(",", ".")
+                rec_txt = tds[4].get_text(" ", strip=True) if len(tds) > 4 else fullname
+
+                edrpou_m = re.search(r"\b(\d{8})\b", src_txt)
+                src_edrpou = edrpou_m.group(1) if edrpou_m else ""
+                name_m = re.search(r"Найменування:\s*([^\n]+)", src_txt)
+                src_name = name_m.group(1).strip() if name_m else (src_txt.splitlines()[-1] if src_txt.splitlines() else "")
+
+                incomes[str(idx + 1)] = {
+                    "iteration": str(idx + 1),
+                    "source_name": src_name,
+                    "source_edrpou": src_edrpou,
+                    "source_citizen": "Юридична особа, зареєстрована в Україні" if "Юридична особа" in src_txt else "Громадянин України",
+                    "objectType": inc_type,
+                    "sizeIncome": amt,
+                    "rights": {
+                        "1": {
+                            "citizen": fullname
+                        }
+                    }
+                }
+
+        # Step 12 (cash)
+        cash_assets = {}
+        s12 = soup.find(id="step-data-12")
+        if s12:
+            trs = s12.find_all("tr")
+            for idx, tr in enumerate(trs[1:]):
+                tds = tr.find_all(["th", "td"])
+                if len(tds) < 4:
+                    continue
+                cash_assets[str(idx + 1)] = {
+                    "objectType": tds[1].get_text(strip=True),
+                    "sizeAssets": tds[2].get_text(strip=True).replace(" ", ""),
+                    "assetsCurrency": "UAH",
+                }
+
+        return {
+            "id": document_id,
+            "declaration_type": decl_type,
+            "declaration_year": year,
+            "data": {
+                "step_0": {
+                    "data": {
+                        "declaration_type": decl_type,
+                        "declaration_period": year,
+                        "declaration_year": year,
+                    }
+                },
+                "step_1": {
+                    "data": {
+                        "lastname": lastname,
+                        "firstname": firstname,
+                        "middlename": middlename,
+                        "workPlace": workplace,
+                        "workPost": post,
+                        "workPlaceEdrpou": edrpou,
+                        "actual_region": region,
+                        "postCategory": post_category,
+                        "postType": post_type,
+                    }
+                },
+                "step_2": {"data": {}},
+                "step_11": {"data": incomes},
+                "step_12": {"data": cash_assets},
+            }
+        }
+
+    def _search_web_html(self, query: str, page: int = 1) -> dict:
+        """Fallback: search public registry HTML and return list structure."""
+        from bs4 import BeautifulSoup
+        import re
+        url = f"https://public.nazk.gov.ua/documents/list?q={urlencode({'q': query})[2:]}&page={page}"
+        resp = self._session.get(url, timeout=self.timeout)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        
+        items = []
+        links = soup.find_all("a", href=re.compile(r"^/documents/[0-9a-f-]{36}$"))
+        seen = set()
+        for a in links:
+            href = a["href"]
+            if href in seen:
+                continue
+            seen.add(href)
+            doc_id = href.split("/")[-1]
+            container = a
+            while container and container.name != "body":
+                if container.find("span", class_="info-1"):
+                    break
+                container = container.parent
+            text = " ".join(container.stripped_strings) if container else ""
+            date_m = re.search(r"([0-9]{2}\.[0-9]{2}\.[0-9]{4}\s+[0-9]{2}:[0-9]{2})", text)
+            date_str = date_m.group(1) if date_m else ""
+            
+            decl_type = 1
+            if "кандидат" in text.lower():
+                decl_type = 2
+            elif "звільнен" in text.lower():
+                decl_type = 3
+            elif "виправлена" in text.lower():
+                decl_type = 4
+                
+            year_m = re.search(r"(?:20\d{2})", text)
+            year = int(year_m.group(0)) if year_m else 0
+            
+            wp_m = re.search(r"Посада:\s*([^H]+?)(?=HTML|$)", text)
+            wp = wp_m.group(1).strip() if wp_m else ""
+            
+            items.append({
+                "id": doc_id,
+                "date": date_str,
+                "declaration_type": decl_type,
+                "declaration_year": year,
+                "data": {"step_1": {"data": {"workPlace": wp}}}
+            })
+        return {"data": items}
+
     def get_document(self, document_id: str) -> dict:
-        """Fetch a single declaration by UUID."""
-        return self._get(f"/documents/{document_id}")
+        """Fetch a single declaration by UUID, falling back to registry HTML on 403."""
+        try:
+            return self._get(f"/documents/{document_id}")
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 403:
+                return self._fetch_document_html(document_id)
+            raise
 
     def list_documents(
         self,
@@ -504,7 +689,12 @@ class NazkClient:
         if actual_city_path is not None:
             params["actual_cityPath"] = actual_city_path
             
-        return self._get("/documents/list", params)
+        try:
+            return self._get("/documents/list", params)
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 403 and query:
+                return self._search_web_html(query, page=page or 1)
+            raise
 
     def iter_documents(self, **kwargs) -> Any:
         """
